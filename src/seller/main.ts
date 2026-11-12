@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 import { setTimeout as sleep } from 'node:timers/promises';
+import { createPublicClient, http, type Address } from 'viem';
+import { mainnet } from 'viem/chains';
+import { normalize } from 'viem/ens';
 import { LocalSigner, ViemChain } from './chain.js';
 import { loadConfig, scrubSecretsFromEnv, ConfigError } from './config.js';
-import { Engine } from './engine.js';
+import { Engine, type EnsView } from './engine.js';
 import { startHttp } from './http.js';
 import { logger, registerSecret } from './log.js';
 import { Store } from './store.js';
@@ -34,7 +37,16 @@ async function main(): Promise<void> {
     cfg.llm.provider === 'deepseek' ? new DeepSeekProvider({ apiKey: cfg.llm.apiKey!, model: cfg.llm.model, baseUrl: cfg.llm.baseUrl })
     : cfg.llm.provider === 'mock' ? new MockProvider()
     : null;
-  const engine = new Engine({ cfg, store, chain, signer, provider });
+  let ens: EnsView | null = null;
+  if (cfg.ens.check && cfg.ens.rpcUrl) {
+    const ec = createPublicClient({ chain: mainnet, transport: http(cfg.ens.rpcUrl, { timeout: 15_000, retryCount: 2 }) });
+    ens = {
+      address: (name) => ec.getEnsAddress({ name: normalize(name) }),
+      text: (name, key) => ec.getEnsText({ name: normalize(name), key }),
+      primaryName: (address: Address) => ec.getEnsName({ address }),
+    };
+  }
+  const engine = new Engine({ cfg, store, chain, signer, provider, ens });
 
   logger.info('zerohuman seller starting', {
     seller: signer.address,
@@ -42,6 +54,7 @@ async function main(): Promise<void> {
     mode: cfg.allowlist ? `allowlist(${cfg.allowlist.size})` : 'PUBLIC',
     confirmations: cfg.confirmations,
     llm: provider?.name ?? 'none',
+    ensIdentity: cfg.ens.check ? cfg.ens.name : 'off',
     instance: cfg.instanceId,
   });
 

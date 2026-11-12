@@ -1,5 +1,5 @@
 import { getAddress, isAddress, parseGwei, type Address, type Hex } from 'viem';
-import { MAINNET_CHAIN_ID, PRICE_WEI } from '../protocol/constants.js';
+import { ENS_NAME, MAINNET_CHAIN_ID, PRICE_WEI } from '../protocol/constants.js';
 
 export interface SellerConfig {
   chainId: number;
@@ -38,6 +38,8 @@ export interface SellerConfig {
   instanceId: string;
   leaseTtlMs: number;
   publicStatusUrl: string | null;
+  /** Identity guard: addr(name) must equal the seller wallet before anything is signed. */
+  ens: { check: boolean; name: string; rpcUrl: string | null; intervalMs: number };
 }
 
 export class ConfigError extends Error {}
@@ -151,7 +153,14 @@ export function loadConfig(env: Env = process.env): SellerConfig {
     instanceId: env.RAILWAY_DEPLOYMENT_ID?.trim() || env.INSTANCE_ID?.trim() || `local-${process.pid}-${Date.now()}`,
     leaseTtlMs: int(env, 'LEASE_TTL_MS', 90_000, 5_000),
     publicStatusUrl: env.PUBLIC_STATUS_URL?.trim() || null,
+    ens: {
+      check: bool(env, 'ENS_CHECK', chainId === MAINNET_CHAIN_ID),
+      name: env.ENS_NAME?.trim() || ENS_NAME,
+      rpcUrl: env.ENS_RPC_URL?.trim() || (chainId === MAINNET_CHAIN_ID ? rpcUrls[0]! : null),
+      intervalMs: int(env, 'ENS_CHECK_INTERVAL_MS', 600_000, 10_000),
+    },
   };
+  if (cfg.ens.check && !cfg.ens.rpcUrl) throw new ConfigError('ENS_RPC_URL (a mainnet RPC) is required when ENS_CHECK is on outside mainnet');
   if (cfg.llm.provider === 'deepseek' && !cfg.llm.apiKey) throw new ConfigError('DEEPSEEK_API_KEY is required when LLM_PROVIDER=deepseek');
   if (cfg.sweep && cfg.sweep.keepWei >= cfg.sweep.aboveWei) throw new ConfigError('SWEEP_KEEP_WEI must be below SWEEP_ABOVE_WEI');
   if (cfg.gas.maxPriorityFeePerGas > cfg.gas.maxFeePerGas) throw new ConfigError('MAX_PRIORITY_FEE_GWEI exceeds MAX_FEE_PER_GAS_GWEI');

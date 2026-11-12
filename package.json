@@ -19,7 +19,8 @@
   },
   "bin": {
     "zh-buyer": "./dist/cli/buyer.js",
-    "zh-admin": "./dist/cli/admin.js"
+    "zh-admin": "./dist/cli/admin.js",
+    "zh-ens": "./dist/cli/ens.js"
   },
   "files": [
     "dist",
@@ -43,7 +44,8 @@
     "admin": "tsx src/cli/admin.ts",
     "shadow-scan": "tsx scripts/shadow-scan.ts",
     "testnet-e2e": "tsx scripts/testnet-e2e.ts",
-    "prepare": "tsc -p tsconfig.build.json"
+    "prepare": "tsc -p tsconfig.build.json",
+    "ens": "tsx src/cli/ens.ts"
   },
   "dependencies": {
     "viem": "2.57.18",

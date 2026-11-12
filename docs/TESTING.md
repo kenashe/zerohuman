@@ -9,11 +9,12 @@ foundry anvil 1.5.1. All numbers below are from the final run of the committed c
 |---|---|---|
 | Typecheck (strict) | `npm run typecheck` | ✅ clean |
 | Unit (protocol, decision, encouragement, DeepSeek adapter, config, logger, catalog, schemas) | `npm test` | ✅ 75 / 75 |
-| Integration (full seller state machine on an in-memory chain with fault injection) | `npm test` | ✅ 32 / 32 |
+| Integration (full seller state machine on an in-memory chain with fault injection; ENS identity guard) | `npm test` | ✅ 38 / 38 |
 | End-to-end on a real EVM (anvil, fresh random wallets, public SDK as buyer) | `npm run test:e2e` | ✅ 7 / 7 |
-| **Total** | `npm run test:all` | **✅ 114 / 114** |
+| **Total** | `npm run test:all` | **✅ 120 / 120** |
 | Compiled production entrypoint smoke test (`node dist/seller/main.js` + `zh-buyer` + `zh-admin`) | manual | ✅ both services delivered and verified; private key found 0 times in logs |
 | Mainnet read-only checks | `npm run catalog -- check`, `npm run shadow-scan` | ✅ ENS Universal Resolver read of `zerohuman.eth`; 21 live blocks / 5,415 txs (legacy, 2930, 1559, 4844, 7702) parsed and classified |
+| Primary-name transaction rehearsal on a **mainnet fork** (anvil `--fork-url`) | `npm run ens -- primary-name --send` | ✅ fresh wallet's reverse record = `zerohuman.eth`, 114,042 gas |
 | Sepolia live run | `npm run testnet-e2e` | ⏳ script ready; needs two funded Sepolia test wallets (see LAUNCH-CHECKLIST B) |
 
 ## Stage 2 coverage map
@@ -227,6 +228,15 @@ RPC_URL=<mainnet> npm run catalog -- check
 **test/unit/schemas.test.ts** — published JSON Schemas
 
 - ✅ are in sync with the zod source of truth (run `npm run schemas` if this fails)
+
+**test/integration/ens-identity.test.ts**
+
+- ✅ seller signs nothing until zerohuman.eth resolves to the seller, then delivers
+- ✅ seller pauses if the name moves to another address, or the catalog seller / chainId disagrees
+- ✅ an ENS RPC outage keeps the last verdict (no unpause, no crash)
+- ✅ buyer resolves zerohuman.eth → address and cross-checks the catalog
+- ✅ buyer refuses when the ETH address record and the catalog seller disagree
+- ✅ buyer refuses when the name has no ETH address
 
 **test/e2e/anvil.test.ts**
 

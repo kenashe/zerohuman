@@ -10,6 +10,11 @@
           "type": "string",
           "const": "zh/1"
         },
+        "name": {
+          "description": "The ENS name this catalog belongs to; buyers pay addr(name)",
+          "type": "string",
+          "maxLength": 255
+        },
         "chainId": {
           "type": "integer",
           "exclusiveMinimum": 0,
@@ -18,7 +23,7 @@
         "seller": {
           "type": "string",
           "pattern": "^0x[0-9a-fA-F]{40}$",
-          "description": "Seller payment wallet; send orders here and expect deliveries from here"
+          "description": "Must equal addr(name). Orders are paid to the name; deliveries come from it"
         },
         "services": {
           "type": "object",

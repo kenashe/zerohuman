@@ -36,7 +36,8 @@ cost the same gas as a delivery and are covered by the payment.
 
 | Item | Estimate |
 |---|---|
-| ENS `setText("com.zerohuman.services", <522-byte JSON>)` | ≈ 350k–450k gas ≈ 0.00004–0.00008 ETH at 0.1–0.17 gwei (storage-dominated) |
+| ENS app: ETH address + `com.zerohuman.services` (≈540-byte JSON), one transaction | ≈ 350k–450k gas ≈ 0.00004–0.00008 ETH at 0.1–0.17 gwei (storage-dominated) |
+| Seller primary name (`setName`, seller wallet) | 114,042 gas (measured on a mainnet fork) ≈ 0.00001 ETH at 0.1 gwei |
 | Seller gas float | 0.003–0.005 ETH covers ~1,000 deliveries at today's fees |
 | Test-buyer funds | 0.002 ETH covers ~10 test orders + gas |
 | Sepolia | free (faucet) |

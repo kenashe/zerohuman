@@ -19,7 +19,8 @@ in an ordinary Ethereum transaction from the seller.
 | Protocol id | `zh/1` (the number `1` in every payload as `"zh": 1`) |
 | Chain | Ethereum mainnet, chain id `1` |
 | Price (both services) | exactly `100000000000000` wei = 0.0001 ETH |
-| Discovery | ENS name `zerohuman.eth`, text record `com.zerohuman.services` |
+| Identity | **`zerohuman.eth`** — orders are paid to `addr(zerohuman.eth)`, deliveries come from it |
+| Discovery | text record `com.zerohuman.services` on `zerohuman.eth` |
 | Order id | the hash of the buyer's order transaction |
 | Max request | 768 bytes of transaction input data |
 | Max response | 1024 bytes of transaction input data |
@@ -51,13 +52,17 @@ read the record. The record value is a single-line JSON document
 |---|---|
 | `v` | protocol id, must be `zh/1` |
 | `chainId` | settlement chain; buyers must refuse if their RPC reports a different chain |
-| `seller` | the only address orders go to and deliveries come from |
+| `name` | `zerohuman.eth` |
+| `seller` | must equal `addr(zerohuman.eth)`: the only address orders go to and deliveries come from |
 | `services.*.price` | price in wei as a decimal string; buyers must refuse if it differs from `100000000000000` |
 | `status` | `live` (anyone), `allowlist` (only pre-approved buyers are fulfilled), `paused`, `retired` |
 | `sla` | confirmations the seller waits, typical and maximum fulfilment time in seconds |
 | `statusUrl` | optional read-only status API (convenience only; never required) |
 
-The seller wallet is **not** the ETH address (`addr`) record of `zerohuman.eth`; always use `seller`.
+**The ETH address record of `zerohuman.eth` is authoritative.** The catalog's `seller` field must equal
+`addr(zerohuman.eth)`; buyers must refuse to pay if they differ. The SDK's `resolveIdentity()` does this. The
+seller's primary name (reverse record) is `zerohuman.eth`, so explorers show deliveries from `zerohuman.eth`.
+See [ENS-SETUP.md](ENS-SETUP.md).
 
 ## 3. Placing an order
 
@@ -65,7 +70,7 @@ Send one transaction:
 
 | Field | Value |
 |---|---|
-| `to` | catalog `seller` |
+| `to` | `zerohuman.eth` — i.e. `addr(zerohuman.eth)`, resolved immediately before sending (equals catalog `seller`) |
 | `value` | exactly `100000000000000` |
 | `data` | UTF-8 bytes of the request JSON (no ABI encoding, no selector) |
 | `chainId` | `1` (EIP-155 replay protection is required; legacy unprotected txs are not fulfilled) |
@@ -181,8 +186,8 @@ Codes: `bad_json`, `bad_version`, `unknown_service`, `invalid_input`, `too_large
 
 A buyer should accept a delivery only if, **using its own RPC**:
 
-1. the order tx succeeded, was sent to `seller`, with value exactly the price;
-2. the delivery tx succeeded, is from `seller`, to the order's `from`, with value 0, in a later block;
+1. the order tx succeeded, was sent to `addr(zerohuman.eth)`, with value exactly the price;
+2. the delivery tx succeeded, is from `addr(zerohuman.eth)` (the address the order paid), to the order's `from`, with value 0, in a later block;
 3. the delivery data parses as a zh/1 response with `re` equal to the order hash;
 4. for decisions: recomputing `keccak256(blockhash(orderBlock+5) ‖ orderTxHash) mod n` over
    the `opts` **read from the order transaction itself** gives `out.index`, and `out.option` equals `opts[out.index]`.
