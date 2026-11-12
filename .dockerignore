@@ -1,0 +1,10 @@
+node_modules
+dist
+data
+wallets
+.env
+.env.*
+coverage
+test
+*.log
+.git

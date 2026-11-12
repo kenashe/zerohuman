@@ -1,0 +1,69 @@
+{
+  "name": "zerohuman",
+  "version": "1.0.0",
+  "description": "ZeroHuman: autonomous services for AI agents, discovered via ENS and settled on Ethereum.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/sdk/index.d.ts",
+      "default": "./dist/sdk/index.js"
+    },
+    "./protocol": {
+      "types": "./dist/protocol/index.d.ts",
+      "default": "./dist/protocol/index.js"
+    }
+  },
+  "bin": {
+    "zh-buyer": "./dist/cli/buyer.js",
+    "zh-admin": "./dist/cli/admin.js"
+  },
+  "files": [
+    "dist",
+    "schemas",
+    "docs",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/seller/main.js",
+    "dev": "tsx src/seller/main.ts",
+    "test": "vitest run test/unit test/integration",
+    "test:e2e": "vitest run test/e2e",
+    "test:all": "vitest run",
+    "schemas": "tsx scripts/gen-schemas.ts",
+    "catalog": "tsx src/cli/catalog.ts",
+    "keygen": "tsx src/cli/keygen.ts",
+    "buyer": "tsx src/cli/buyer.ts",
+    "admin": "tsx src/cli/admin.ts",
+    "shadow-scan": "tsx scripts/shadow-scan.ts",
+    "testnet-e2e": "tsx scripts/testnet-e2e.ts",
+    "prepare": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "viem": "2.57.18",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kenashe/zerohuman.git"
+  },
+  "keywords": [
+    "ethereum",
+    "ens",
+    "ai-agents",
+    "agent-payments",
+    "autonomous-agents"
+  ]
+}

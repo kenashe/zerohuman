@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/kenashe/zerohuman/main/schemas/decision-response.schema.json",
+  "$ref": "#/$defs/DecisionResponse",
+  "$defs": {
+    "DecisionResponse": {
+      "type": "object",
+      "properties": {
+        "zh": {
+          "type": "number",
+          "const": 1
+        },
+        "re": {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]{64}$",
+          "description": "Original order transaction hash"
+        },
+        "ok": {
+          "type": "boolean",
+          "const": true
+        },
+        "svc": {
+          "type": "string",
+          "const": "decision"
+        },
+        "out": {
+          "type": "object",
+          "properties": {
+            "index": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "option": {
+              "type": "string"
+            },
+            "method": {
+              "type": "string",
+              "const": "zh-blockhash-v1"
+            },
+            "proof": {
+              "type": "object",
+              "properties": {
+                "orderBlock": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "description": "Block number that included the order transaction"
+                },
+                "offset": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "description": "Protocol block offset (5 in zh/1)"
+                },
+                "targetBlock": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "description": "orderBlock + offset"
+                },
+                "targetBlockHash": {
+                  "type": "string",
+                  "pattern": "^0x[0-9a-f]{64}$",
+                  "description": "Hash of targetBlock on the canonical chain"
+                },
+                "seed": {
+                  "type": "string",
+                  "pattern": "^0x[0-9a-f]{64}$",
+                  "description": "keccak256(targetBlockHash ‖ orderTxHash)"
+                },
+                "n": {
+                  "type": "integer",
+                  "minimum": 2,
+                  "maximum": 5
+                }
+              },
+              "required": [
+                "orderBlock",
+                "offset",
+                "targetBlock",
+                "targetBlockHash",
+                "seed",
+                "n"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "index",
+            "option",
+            "method",
+            "proof"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "zh",
+        "re",
+        "ok",
+        "svc",
+        "out"
+      ],
+      "additionalProperties": false,
+      "title": "zh/1 Decision response (delivery transaction input data)"
+    }
+  },
+  "x-zh-algorithm": {
+    "method": "zh-blockhash-v1",
+    "offset": 5,
+    "seed": "keccak256(blockhash(orderBlock + offset) ‖ orderTxHash)",
+    "index": "uint256(seed) mod n"
+  }
+}

@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/kenashe/zerohuman/main/schemas/encouragement-response.schema.json",
+  "$ref": "#/$defs/EncouragementResponse",
+  "$defs": {
+    "EncouragementResponse": {
+      "type": "object",
+      "properties": {
+        "zh": {
+          "type": "number",
+          "const": 1
+        },
+        "re": {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]{64}$",
+          "description": "Original order transaction hash"
+        },
+        "ok": {
+          "type": "boolean",
+          "const": true
+        },
+        "svc": {
+          "type": "string",
+          "const": "encouragement"
+        },
+        "out": {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            },
+            "nextStep": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "tone": {
+              "type": "string",
+              "enum": [
+                "supportive",
+                "playful"
+              ]
+            },
+            "gen": {
+              "type": "string",
+              "enum": [
+                "llm",
+                "fallback"
+              ],
+              "description": "Whether the text came from the model or the built-in fallback"
+            }
+          },
+          "required": [
+            "message",
+            "nextStep",
+            "tone",
+            "gen"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "zh",
+        "re",
+        "ok",
+        "svc",
+        "out"
+      ],
+      "additionalProperties": false,
+      "title": "zh/1 Encouragement response (delivery transaction input data)"
+    }
+  }
+}

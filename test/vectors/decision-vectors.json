@@ -1,0 +1,61 @@
+{
+  "note": "Generated with foundry `cast keccak <blockhash||txhash>` and Python int(seed,16) % n, independent of the TypeScript implementation.",
+  "vectors": [
+    {
+      "targetBlockHash": "0xd08e3ffab84375af5d73bf95ceff853daf3fa5c2dc970f4f236704b001c70934",
+      "orderTxHash": "0x3c493ab79dee04b2f7e6218dea60bbc59b1880556a8b1b04070cd50d9ba0f5b1",
+      "n": 2,
+      "seed": "0x0441370f0f213868f8f05f668afa1f4484f86bb2ee50963000f66c7d3b5320be",
+      "index": 0
+    },
+    {
+      "targetBlockHash": "0xefef2d1b105f387e9e20c753737cc3f4cb937e17620645a19c77a6c310c18cde",
+      "orderTxHash": "0xf797a2c01d8536099d630d86c1bb321c9d83f2cee731a067c7456948aaacca2c",
+      "n": 3,
+      "seed": "0xef37ad35f3ab52747ec431dc390e154828472b8839e70ec9a7e68f386796d852",
+      "index": 2
+    },
+    {
+      "targetBlockHash": "0x9e63df8e37facf6cf7f9da138ab4352a216a876e97c57fe2384f66db429ece1f",
+      "orderTxHash": "0xbfaae6c9a5cca3e229998eadfb2de82f356142dd3d3496cfed29905c75b991d2",
+      "n": 4,
+      "seed": "0x6e7620d5fd0879ce29b5fd557ca13bff1bfc14c08db2beac064ff514ccace616",
+      "index": 2
+    },
+    {
+      "targetBlockHash": "0xef6c6181c65ef08292a9bbef52ae35d53f5ec9823fc4b41ff87c4be139c0dc96",
+      "orderTxHash": "0x430f40008406e8fe313169d00e77b446795872cfc4c02396e3694f6831dd56a7",
+      "n": 5,
+      "seed": "0x38d2cd017402f25c284855d845a9ed869a6d8ab1b975ca9c4626b75c544344fd",
+      "index": 4
+    },
+    {
+      "targetBlockHash": "0xa5c9b75c6be1a66712f2b6a49074c8a2f5e673bda7e285eb11d71f2dcef78581",
+      "orderTxHash": "0xbfe7a4c2b066c397b5912e6b0f53c694e6dede21804e82389fcc7e00fd42870a",
+      "n": 2,
+      "seed": "0x6e4c56fb52a603983efcff7e8a33f2547ca15b785af54fa45f4b5bc7e019d4d4",
+      "index": 0
+    },
+    {
+      "targetBlockHash": "0xced502d9381a6b82deede746e219f3f32c0a52ae955855589faa4888c04a242e",
+      "orderTxHash": "0x71367b697dec61082e85160ac0d956c7ac38782dd3dbd38437f6fe95da468388",
+      "n": 3,
+      "seed": "0x13eaed8eaf719d9c2b3a5cfc54274e419136ebb3a06edd1b4990b6c8b5bb5714",
+      "index": 0
+    },
+    {
+      "targetBlockHash": "0xa42fd0bb0348f2e2080cac674297f9606410e70c2f9e6917c5d5403c5c8ffd12",
+      "orderTxHash": "0x9149cb652a5af0d4d1e76c6b06c7c431bfa3cf4a3fd5f9f59993d77de946dcf4",
+      "n": 4,
+      "seed": "0x89350ac600110d929b5144c7838da1ed9f512eaece2ab91e4821c770fcb49938",
+      "index": 0
+    },
+    {
+      "targetBlockHash": "0xe88994ec25eb020d692f3a0e555b1dbef0475a27b8d457f4479482ef4144ee2e",
+      "orderTxHash": "0xfb834485ca2d1ead0d3f8e81dda60b7db9448d07216d9422ecc36d56f36982f2",
+      "n": 5,
+      "seed": "0xdf9bd4e7cfa65cbdbdb913c742d5c7dcc46f9f1125de7cd84930b6501adfbbb4",
+      "index": 1
+    }
+  ]
+}

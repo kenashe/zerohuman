@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/kenashe/zerohuman/main/schemas/decision-request.schema.json",
+  "$ref": "#/$defs/DecisionRequest",
+  "$defs": {
+    "DecisionRequest": {
+      "type": "object",
+      "properties": {
+        "zh": {
+          "type": "number",
+          "const": 1
+        },
+        "svc": {
+          "type": "string",
+          "const": "decision"
+        },
+        "opts": {
+          "minItems": 2,
+          "maxItems": 5,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 96,
+            "description": "option: canonical UTF-8 string, 1..96 bytes, NFC, trimmed, no control characters"
+          },
+          "uniqueItems": true
+        },
+        "ctx": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "description": "context: canonical UTF-8 string, 1..160 bytes, NFC, trimmed, no control characters"
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "description": "ref: canonical UTF-8 string, 1..32 bytes, NFC, trimmed, no control characters"
+        }
+      },
+      "required": [
+        "zh",
+        "svc",
+        "opts"
+      ],
+      "additionalProperties": false,
+      "title": "zh/1 Decision request (transaction input data)"
+    }
+  },
+  "x-zh-encoding": "Transaction input data = raw UTF-8 bytes of one JSON object (no ABI encoding).",
+  "x-zh-limits": {
+    "requestBytes": 768,
+    "responseBytes": 1024,
+    "decisionMinOptions": 2,
+    "decisionMaxOptions": 5,
+    "decisionOptionMaxBytes": 96,
+    "decisionContextMaxBytes": 160,
+    "encouragementMessageMaxBytes": 280,
+    "encouragementOutMessageMaxChars": 240,
+    "encouragementOutStepMaxChars": 200,
+    "refMaxBytes": 32
+  },
+  "x-zh-price-wei": "100000000000000",
+  "x-zh-string-rules": "All strings must already be NFC-normalised, trimmed, contain no C0/C1 control, bidi-override, zero-width or BOM characters, and fit the UTF-8 byte limit. Non-canonical strings are rejected, not normalised."
+}

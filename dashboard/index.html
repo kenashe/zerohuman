@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZeroHuman — autonomous services for AI agents</title>
+<meta name="description" content="ZeroHuman sells tiny services to autonomous AI agents for 0.0001 ETH, discovered via zerohuman.eth and settled on Ethereum.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0b0d0c; --panel: #111513; --line: #1f2723; --ink: #d9e4dc; --dim: #7d8f83; --faint: #4a5a50;
+    --acc: #5cf2a5; --warn: #ffcc4d; --bad: #ff6b6b; --link: #8ed1ff;
+    --mono: 'JetBrains Mono', ui-monospace, Menlo, monospace; --sans: 'Space Grotesk', system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.55 var(--mono); }
+  a { color: var(--link); text-decoration: none; } a:hover { text-decoration: underline; }
+  a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 clamp(16px, 4vw, 40px); }
+  header { border-bottom: 1px solid var(--line); padding: 28px 0 22px; }
+  .brand { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  h1 { font: 700 clamp(28px, 4vw, 44px)/1 var(--sans); letter-spacing: -0.02em; margin: 0; }
+  h1 span { color: var(--acc); }
+  .tag { color: var(--dim); }
+  .pill { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); padding: 3px 10px; border-radius: 99px; font-size: 12px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+  .ok .dot { background: var(--acc); box-shadow: 0 0 10px var(--acc); } .warn .dot { background: var(--warn); } .bad .dot { background: var(--bad); }
+  .demo-banner { background: #2a2410; color: var(--warn); border: 1px solid #4a3f12; padding: 8px 12px; margin-top: 14px; font-size: 12px; }
+  section { padding: 26px 0; border-bottom: 1px solid var(--line); }
+  h2 { font: 500 12px/1 var(--mono); text-transform: uppercase; letter-spacing: 0.14em; color: var(--dim); margin: 0 0 16px; }
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); }
+  .card { background: var(--panel); border: 1px solid var(--line); padding: 16px 18px; }
+  .card h3 { font: 700 20px/1.1 var(--sans); margin: 0 0 6px; }
+  .price { color: var(--acc); font-size: 18px; font-weight: 700; }
+  .muted { color: var(--dim); } .small { font-size: 12px; }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; }
+  .kv dt { color: var(--dim); } .kv dd { margin: 0; word-break: break-all; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th { text-align: left; color: var(--dim); font-weight: 500; border-bottom: 1px solid var(--line); padding: 6px 8px; white-space: nowrap; }
+  td { border-bottom: 1px solid var(--line); padding: 7px 8px; vertical-align: top; }
+  .tbl { overflow-x: auto; }
+  .st-fulfilled { color: var(--acc); } .st-needs_review, .st-failed { color: var(--warn); } .st-processing, .st-confirmed, .st-detected { color: var(--link); } .st-ignored { color: var(--faint); }
+  .result { max-width: 360px; color: var(--ink); }
+  input[type=text] { width: 100%; background: #070908; color: var(--ink); border: 1px solid var(--line); padding: 9px 10px; font: inherit; }
+  button { background: var(--acc); color: #04130b; border: 0; padding: 9px 16px; font: 700 13px var(--mono); cursor: pointer; }
+  button:disabled { opacity: .5; cursor: wait; }
+  .row { display: grid; gap: 10px; grid-template-columns: 1fr auto; align-items: center; }
+  pre { background: #070908; border: 1px solid var(--line); padding: 14px; overflow-x: auto; font-size: 12px; margin: 0; white-space: pre-wrap; word-break: break-word; }
+  .verdict { font: 700 16px var(--sans); margin: 12px 0 8px; } .verdict.pass { color: var(--acc); } .verdict.fail { color: var(--bad); }
+  ol.steps { padding-left: 20px; margin: 0; } ol.steps li { margin: 6px 0; }
+  code { color: var(--acc); }
+  footer { padding: 26px 0 50px; color: var(--faint); font-size: 12px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="brand">
+      <h1>Zero<span>Human</span></h1>
+      <span class="tag">autonomous services for AI agents · ENS discovery · Ethereum settlement</span>
+    </div>
+    <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap">
+      <span id="avail" class="pill"><span class="dot"></span><span id="avail-text">connecting…</span></span>
+      <span class="pill"><span class="muted">protocol</span>&nbsp;zh/1</span>
+      <span class="pill"><span class="muted">ens</span>&nbsp;zerohuman.eth · com.zerohuman.services</span>
+      <span class="pill" id="mode-pill"><span class="muted">mode</span>&nbsp;<span id="mode">—</span></span>
+    </div>
+    <div id="demo" class="demo-banner" hidden>DEMO DATA — captured from a local devnet (anvil) test run. Not mainnet. Not a live service.</div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section>
+    <h2>Services</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>decision</h3>
+        <div class="price">0.0001 ETH <span class="small muted">= 100000000000000 wei</span></div>
+        <p class="muted">Submit 2–5 acceptable options. ZeroHuman picks one uniformly at random from a future block hash — no LLM involved — and returns a proof anyone can recompute.</p>
+        <div class="small muted">method zh-blockhash-v1 · target block = order block + 5</div>
+      </div>
+      <div class="card">
+        <h3>encouragement</h3>
+        <div class="price">0.0001 ETH <span class="small muted">= 100000000000000 wei</span></div>
+        <p class="muted">Describe the obstacle your agent hit. Get a short encouraging message and one practical next step. Tones: supportive, playful.</p>
+        <div class="small muted">model deepseek-flash · deterministic fallback if unavailable</div>
+      </div>
+      <div class="card">
+        <h3>seller</h3>
+        <dl class="kv small">
+          <dt>wallet</dt><dd id="seller">—</dd>
+          <dt>chain</dt><dd id="chain">—</dd>
+          <dt>head</dt><dd id="head">—</dd>
+          <dt>last tick</dt><dd id="tick">—</dd>
+          <dt>pauses</dt><dd id="pauses">—</dd>
+        </dl>
+      </div>
+      <div class="card">
+        <h3>gas</h3>
+        <dl class="kv small">
+          <dt>base fee</dt><dd id="basefee">—</dd>
+          <dt>fee cap</dt><dd id="feecap">—</dd>
+          <dt>max / delivery</dt><dd id="maxdel">—</dd>
+          <dt>spent 24h</dt><dd id="spent">—</dd>
+          <dt>budget 24h</dt><dd id="budget">—</dd>
+        </dl>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Recent orders &amp; deliveries</h2>
+    <div class="tbl">
+      <table>
+        <thead><tr><th>block</th><th>service</th><th>state</th><th>order tx</th><th>delivery tx</th><th>gas cost</th><th>result</th></tr></thead>
+        <tbody id="orders"><tr><td colspan="7" class="muted">no data</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Verify a decision proof (independently, from public RPC)</h2>
+    <p class="muted small">This check does not trust ZeroHuman's API. It reads the order transaction and the target block directly from the RPC below, recomputes <code>keccak256(blockhash(orderBlock+5) ‖ orderTxHash) mod n</code>, and compares it with the on-chain delivery.</p>
+    <div class="row" style="margin-bottom:8px"><input id="rpc" type="text" aria-label="RPC URL" value="https://ethereum-rpc.publicnode.com"><span class="small muted">RPC</span></div>
+    <div class="row" style="margin-bottom:8px"><input id="otx" type="text" aria-label="Order transaction hash" placeholder="order transaction hash 0x…"><span class="small muted">order</span></div>
+    <div class="row"><input id="dtx" type="text" aria-label="Delivery transaction hash" placeholder="delivery transaction hash 0x… (optional)"><button id="verify">verify</button></div>
+    <div id="verdict" class="verdict"></div>
+    <pre id="vout" hidden></pre>
+  </section>
+
+  <section>
+    <h2>For independent buyer agents</h2>
+    <ol class="steps">
+      <li>Read the ENS text record <code>com.zerohuman.services</code> on <code>zerohuman.eth</code> (use any Universal-Resolver/ENSv2-ready client, e.g. viem <code>getEnsText</code>). It contains the seller wallet, chain id, exact prices, and schema URL.</li>
+      <li>Build a request, e.g. <code>{"zh":1,"svc":"decision","opts":["a","b","c"]}</code> or <code>{"zh":1,"svc":"encouragement","msg":"my job keeps timing out","tone":"playful"}</code>. Max 768 bytes. Everything is public: never include secrets.</li>
+      <li>Send exactly <code>100000000000000</code> wei to the seller wallet on chain 1 with the UTF-8 JSON bytes as transaction <code>data</code>.</li>
+      <li>Your order id is your transaction hash. Watch for a zero-value transaction from the seller to your address whose data is a JSON response with <code>"re"</code> = your order hash.</li>
+      <li>For decisions, verify: <code>index = uint256(keccak256(blockhash(orderBlock+5) ‖ orderTxHash)) mod n</code>.</li>
+    </ol>
+    <p class="small muted">TypeScript SDK + CLI, protocol spec and JSON Schemas: <a href="https://github.com/kenashe/zerohuman" target="_blank" rel="noopener noreferrer">github.com/kenashe/zerohuman</a>. Low-stakes randomness only; refunds are best-effort, there is no escrow.</p>
+  </section>
+</main>
+<footer class="wrap">Read-only status page. No signing, no administration, no wallet connection.</footer>
+
+<script type="module">
+const $ = (id) => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+const API = (params.get('api') || window.ZH_API || '').replace(/\/+$/, '');
+const EXPLORERS = { 1: 'https://etherscan.io', 11155111: 'https://sepolia.etherscan.io' };
+const eth = (wei) => wei == null ? '—' : (Number(BigInt(wei)) / 1e18).toFixed(8).replace(/0+$/, '').replace(/\.$/, '') + ' ETH';
+const gwei = (wei) => wei == null ? '—' : (Number(BigInt(wei)) / 1e9).toFixed(3) + ' gwei';
+const short = (h) => h ? h.slice(0, 10) + '…' + h.slice(-6) : '—';
+let chainId = 1;
+
+function txLink(hash) {
+  const base = EXPLORERS[chainId];
+  if (!hash) return document.createTextNode('—');
+  if (!base) { const s = document.createElement('span'); s.textContent = short(hash); s.title = hash; return s; }
+  const a = document.createElement('a'); a.href = `${base}/tx/${hash}`; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = short(hash); a.title = hash; return a;
+}
+function cell(content, cls) { const td = document.createElement('td'); if (cls) td.className = cls; if (content instanceof Node) td.append(content); else td.textContent = content ?? '—'; return td; }
+
+function summarise(o) {
+  if (!o.result) return o.reason || (o.outcome === 'error' ? 'error response' : '');
+  if (o.service === 'decision') return `#${o.result.index} “${o.result.option}” of ${o.result.proof.n}`;
+  if (o.service === 'encouragement') return `${o.result.message} → ${o.result.nextStep}`;
+  return '';
+}
+
+function render(status, orders) {
+  chainId = status.chainId;
+  const healthy = status.healthy && !status.paused;
+  $('avail').className = 'pill ' + (healthy ? 'ok' : status.healthy ? 'warn' : 'bad');
+  $('avail-text').textContent = healthy ? 'available' : status.paused ? 'paused: ' + Object.keys(status.pauses).join(', ') : 'unhealthy';
+  $('mode').textContent = status.mode;
+  $('seller').textContent = status.seller;
+  $('chain').textContent = status.chainId === 1 ? '1 (mainnet)' : String(status.chainId);
+  $('head').textContent = status.head ?? '—';
+  $('tick').textContent = status.lastTickAt ?? '—';
+  $('pauses').textContent = Object.keys(status.pauses).length ? Object.entries(status.pauses).map(([k, v]) => `${k}: ${v.reason}`).join('; ') : 'none';
+  $('basefee').textContent = gwei(status.gas.lastBaseFeeWei);
+  $('feecap').textContent = gwei(status.gas.maxFeePerGasWei);
+  $('maxdel').textContent = eth(status.gas.maxDeliveryCostWei);
+  $('spent').textContent = eth(status.gas.spent24hWei);
+  $('budget').textContent = eth(status.gas.dailyBudgetWei);
+  const tb = $('orders'); tb.replaceChildren();
+  if (!orders.length) { const tr = document.createElement('tr'); tr.append(cell('no orders yet', 'muted')); tr.firstChild.colSpan = 7; tb.append(tr); return; }
+  for (const o of orders) {
+    const tr = document.createElement('tr');
+    tr.append(cell(String(o.block)), cell(o.service ?? '—'), cell(o.state, 'st-' + o.state), cell(txLink(o.order)), cell(txLink(o.delivery)), cell(o.gasCostWei ? eth(o.gasCostWei) : '—'), cell(summarise(o), 'result'));
+    tr.querySelector('td:nth-child(4)').addEventListener('dblclick', () => { $('otx').value = o.order; $('dtx').value = o.delivery || ''; });
+    tb.append(tr);
+  }
+}
+
+async function load() {
+  if (params.has('demo') || window.ZH_DEMO) { $('demo').hidden = false; const d = window.ZH_DEMO; render(d.status, d.orders); return; }
+  try {
+    const [s, o] = await Promise.all([fetch(API + '/api/status').then((r) => r.json()), fetch(API + '/api/orders').then((r) => r.json())]);
+    render(s, o.orders);
+  } catch {
+    $('avail').className = 'pill bad'; $('avail-text').textContent = 'status API unreachable — on-chain verification still works';
+  }
+}
+load();
+setInterval(() => { if (!params.has('demo') && !window.ZH_DEMO) load(); }, 15000);
+
+$('verify').addEventListener('click', async () => {
+  const btn = $('verify'); btn.disabled = true; $('verdict').textContent = 'checking…'; $('verdict').className = 'verdict'; $('vout').hidden = true;
+  try {
+    const { createPublicClient, http, keccak256, concat, hexToString, hexToBigInt } = await import('https://esm.sh/viem@2.57.18');
+    const pc = createPublicClient({ transport: http($('rpc').value.trim()) });
+    const otx = $('otx').value.trim().toLowerCase();
+    if (!/^0x[0-9a-f]{64}$/.test(otx)) throw new Error('order hash must be 0x + 64 hex characters');
+    const order = await pc.getTransaction({ hash: otx });
+    const req = JSON.parse(hexToString(order.input));
+    if (req.svc !== 'decision' || !Array.isArray(req.opts)) throw new Error('not a decision order');
+    const targetBlock = order.blockNumber + 5n;
+    const tb = await pc.getBlock({ blockNumber: targetBlock });
+    const seed = keccak256(concat([tb.hash, otx]));
+    const index = Number(hexToBigInt(seed) % BigInt(req.opts.length));
+    const out = { orderBlock: Number(order.blockNumber), targetBlock: Number(targetBlock), targetBlockHash: tb.hash, seed, n: req.opts.length, expectedIndex: index, expectedOption: req.opts[index] };
+    let pass = null;
+    const dtx = $('dtx').value.trim().toLowerCase();
+    if (dtx) {
+      const d = await pc.getTransaction({ hash: dtx });
+      const res = JSON.parse(hexToString(d.input));
+      const checks = {
+        fromSeller: d.from.toLowerCase() === order.to.toLowerCase(),
+        toBuyer: d.to.toLowerCase() === order.from.toLowerCase(),
+        zeroValue: d.value === 0n,
+        referencesOrder: res.re?.toLowerCase() === otx,
+        indexMatches: res.out?.index === index,
+        optionMatches: res.out?.option === req.opts[index],
+        blockHashMatches: res.out?.proof?.targetBlockHash === tb.hash,
+      };
+      out.delivery = { checks, response: res };
+      pass = Object.values(checks).every(Boolean);
+    }
+    $('verdict').textContent = pass === null ? `Expected selection: #${index} — add the delivery hash to compare` : pass ? 'PASS — delivery matches the independently recomputed selection' : 'FAIL — delivery does not match';
+    $('verdict').className = 'verdict ' + (pass === false ? 'fail' : 'pass');
+    $('vout').textContent = JSON.stringify(out, (_k, v) => typeof v === 'bigint' ? v.toString() : v, 2); $('vout').hidden = false;
+  } catch (e) {
+    $('verdict').textContent = 'Error: ' + e.message; $('verdict').className = 'verdict fail';
+  } finally { btn.disabled = false; }
+});
+</script>
+</body>
+</html>

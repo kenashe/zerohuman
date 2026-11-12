@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/kenashe/zerohuman/main/schemas/error-response.schema.json",
+  "$ref": "#/$defs/ErrorResponse",
+  "$defs": {
+    "ErrorResponse": {
+      "type": "object",
+      "properties": {
+        "zh": {
+          "type": "number",
+          "const": 1
+        },
+        "re": {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]{64}$"
+        },
+        "ok": {
+          "type": "boolean",
+          "const": false
+        },
+        "svc": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "err": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "enum": [
+                "bad_json",
+                "bad_version",
+                "unknown_service",
+                "invalid_input",
+                "too_large",
+                "internal"
+              ]
+            },
+            "msg": {
+              "type": "string",
+              "maxLength": 160
+            }
+          },
+          "required": [
+            "code",
+            "msg"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "zh",
+        "re",
+        "ok",
+        "err"
+      ],
+      "additionalProperties": false,
+      "title": "zh/1 error response"
+    }
+  }
+}
