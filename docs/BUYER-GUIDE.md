@@ -19,7 +19,8 @@ const publicClient = createPublicClient({ chain: mainnet, transport: http(proces
 const walletClient = createWalletClient({ account: privateKeyToAccount(process.env.BUYER_PRIVATE_KEY as `0x${string}`), chain: mainnet, transport: http(process.env.RPC_URL) });
 const zh = new ZeroHumanBuyer({ publicClient, walletClient });
 
-const catalog = await zh.getCatalog();            // reads com.zerohuman.services from zerohuman.eth
+const id = await zh.getIdentity();               // addr(zerohuman.eth) + catalog, cross-checked
+console.log(id.address, id.primaryNameMatches);  // pay this name; deliveries come from it
 
 // Decision: pay, wait, receive, verify — one call.
 const d = await zh.order(decisionRequest(['retry now', 'back off 30s', 'escalate'], 'rate limited'));
@@ -69,7 +70,8 @@ Real output (local devnet):
 ```bash
 # 1. Catalog: any Universal-Resolver (ENSv2-ready) client works. With viem:
 CAT=$(node -e "const {createPublicClient,http}=require('viem');const {mainnet}=require('viem/chains');createPublicClient({chain:mainnet,transport:http(process.env.RPC)}).getEnsText({name:'zerohuman.eth',key:'com.zerohuman.services'}).then(console.log)")
-SELLER=$(echo "$CAT" | jq -r .seller)
+SELLER=$(cast resolve-name zerohuman.eth --rpc-url $RPC)         # pay the NAME
+[ "$(echo "$CAT" | jq -r .seller | tr A-F a-f)" = "$(echo $SELLER | tr A-F a-f)" ] || { echo 'catalog/ENS mismatch: do not pay'; exit 1; }
 REQ='{"zh":1,"svc":"decision","opts":["left","right"]}'
 # 2. Pay + order in one transaction (data = UTF-8 bytes of the JSON):
 ORDER=$(cast send $SELLER --value 100000000000000 $(cast from-utf8 "$REQ") \
@@ -79,7 +81,8 @@ ORDER=$(cast send $SELLER --value 100000000000000 $(cast from-utf8 "$REQ") \
 
 ## Rules of thumb for agents
 
-- Read the catalog every time you start; refuse if `chainId`, `seller` format, or `price` look wrong.
+- Pay **zerohuman.eth** (resolve it right before sending). Refuse if `addr(zerohuman.eth)` ≠ catalog `seller`, or if `chainId` or `price` look wrong.
+- Accept deliveries only from the address you paid.
 - Only send from an EOA (or a 7702-delegated EOA that accepts zero-value calls cheaply). The order
   must be a top-level transaction to the seller.
 - Requests are public forever. No secrets, keys, personal data, or confidential task details.

@@ -142,8 +142,9 @@ const weiString = z.string().regex(/^[1-9][0-9]*$/);
 export const CatalogSchema = z
   .object({
     v: z.literal('zh/1'),
+    name: z.string().max(255).optional().meta({ description: 'The ENS name this catalog belongs to; buyers pay addr(name)' }),
     chainId: z.number().int().positive(),
-    seller: address.meta({ description: 'Seller payment wallet; send orders here and expect deliveries from here' }),
+    seller: address.meta({ description: 'Must equal addr(name). Orders are paid to the name; deliveries come from it' }),
     services: z.object({
       decision: z.object({ price: weiString, offset: z.number().int().positive(), method: z.string() }).loose(),
       encouragement: z.object({ price: weiString, tones: z.array(z.string()) }).loose(),

@@ -1,5 +1,6 @@
 import { getAddress, type Address, type Hex } from 'viem';
-import { PRICE_WEI } from '../protocol/constants.js';
+import { ENS_CATALOG_KEY, PRICE_WEI } from '../protocol/constants.js';
+import { parseCatalog } from '../protocol/catalog.js';
 import { decodeRequest, encodeResponse, hasData, decodeResponse } from '../protocol/codec.js';
 import { computeDecision, targetBlockFor } from '../protocol/decision.js';
 import type { ZhResponse } from '../protocol/schemas.js';
@@ -17,11 +18,19 @@ const ceilPct = (v: bigint, pct: number) => (v * BigInt(100 + pct) + 99n) / 100n
 const minBig = (a: bigint, b: bigint) => (a < b ? a : b);
 
 /** Pause kinds that clear themselves when the condition goes away. */
-export const AUTO_PAUSES = ['gas', 'budget', 'balance', 'order_cap', 'rpc'] as const;
+export const AUTO_PAUSES = ['gas', 'budget', 'balance', 'order_cap', 'rpc', 'ens'] as const;
 /** Pause kinds that require an operator (`zh-admin resume <kind>`). */
 export const MANUAL_PAUSES = ['operator', 'nonce'] as const;
 
+/** Minimal ENS view (mainnet). Implemented with viem in production, faked in tests. */
+export interface EnsView {
+  address(name: string): Promise<Address | null>;
+  text(name: string, key: string): Promise<string | null>;
+  primaryName(address: Address): Promise<string | null>;
+}
+
 export interface EngineDeps {
+  ens?: EnsView | null;
   cfg: SellerConfig;
   store: Store;
   chain: ChainClient;
@@ -55,6 +64,9 @@ export class Engine {
   private now: () => number;
   private fault: (p: FaultPoint) => void;
   private chainVerified = false;
+  readonly ens: EnsView | null;
+  private lastEnsCheck = 0;
+  identity: { name: string; ensAddress: string | null; catalogSeller: string | null; primaryName: string | null; ok: boolean; checkedAt: string | null } | null = null;
   lastTickAt = 0;
   lastTickOk = false;
   lastHead: bigint | null = null;
@@ -71,6 +83,51 @@ export class Engine {
     this.store.now = this.now;
     this.fault = d.faultHook ?? (() => {});
     if (this.cfg.operatorPaused) this.store.setPause('operator', 'PAUSED env set');
+    this.ens = d.ens ?? null;
+    if (this.cfg.ens.check) {
+      if (!this.ens) throw new Error('ENS check enabled but no ENS view provided');
+      // Nothing is signed until the name has been verified to point at this wallet.
+      this.store.setPause('ens', `not yet verified that ${this.cfg.ens.name} resolves to ${this.seller}`);
+    }
+  }
+
+  /**
+   * Identity guard: ZeroHuman's public identity is the ENS name. Orders are paid to
+   * addr(name) and deliveries come from it, so this worker only signs while
+   * addr(name) == its own wallet and the catalog's `seller` agrees.
+   * RPC failures keep the previous verdict.
+   */
+  async checkEns(force = false): Promise<void> {
+    if (!this.cfg.ens.check || !this.ens) return;
+    if (!force && this.now() - this.lastEnsCheck < this.cfg.ens.intervalMs && this.lastEnsCheck !== 0) return;
+    const name = this.cfg.ens.name;
+    const [addr, text] = await Promise.all([this.ens.address(name), this.ens.text(name, ENS_CATALOG_KEY)]);
+    let catalogSeller: string | null = null;
+    let problem: string | null = null;
+    if (!addr) problem = `${name} has no ETH address record`;
+    else if (lc(addr) !== lc(this.seller)) problem = `${name} resolves to ${addr}, not this seller ${this.seller}`;
+    if (!problem) {
+      if (!text) problem = `${name} has no ${ENS_CATALOG_KEY} record`;
+      else {
+        try {
+          catalogSeller = parseCatalog(text).seller;
+          if (lc(catalogSeller) !== lc(this.seller)) problem = `catalog seller ${catalogSeller} != ${this.seller}`;
+          else if (parseCatalog(text).chainId !== this.cfg.chainId) problem = `catalog chainId != ${this.cfg.chainId}`;
+        } catch (e) {
+          problem = `catalog record invalid: ${(e as Error).message.slice(0, 120)}`;
+        }
+      }
+    }
+    let primaryName: string | null = null;
+    try {
+      primaryName = await this.ens.primaryName(this.seller);
+    } catch {
+      primaryName = null;
+    }
+    this.lastEnsCheck = this.now();
+    this.identity = { name, ensAddress: addr, catalogSeller, primaryName, ok: !problem, checkedAt: new Date(this.now()).toISOString() };
+    if (problem) this.store.setPause('ens', problem);
+    else this.store.clearPause('ens');
   }
 
   // ======================================================================= tick
@@ -101,6 +158,9 @@ export class Engine {
       });
       if (!this.chainVerified) return this.finish(rep);
     }
+    await step('ens', async () => {
+      await this.checkEns();
+    });
     // 1. Reconcile anything already broadcast before doing anything new.
     await step('reconcile', async () => {
       rep.reconciled = await this.reconcileInFlight();
@@ -409,6 +469,7 @@ export class Engine {
   async sendNext(): Promise<number | null> {
     if (this.store.inFlight()) return null;
     if (this.manualPaused()) return null;
+    if ('ens' in this.store.pauses()) return null; // identity not verified: sign nothing
     let item = this.store.nextQueued();
     if (!item) {
       await this.maybeQueueSweep();
@@ -643,6 +704,7 @@ export class Engine {
       paused: Object.keys(pauses).filter((k) => k !== 'rpc').length > 0,
       pauses,
       mode: this.cfg.allowlist ? 'allowlist' : 'public',
+      identity: this.identity ?? (this.cfg.ens.check ? { name: this.cfg.ens.name, ok: false, checkedAt: null } : null),
       orders: this.store.stateCounts(),
       outbox: this.store.outboxByStatus(),
       gas: {

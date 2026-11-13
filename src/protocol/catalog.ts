@@ -1,5 +1,5 @@
 import { getAddress, type Address } from 'viem';
-import { DECISION_BLOCK_OFFSET, DECISION_METHOD, ENCOURAGEMENT_TONES, LIMITS, PRICE_WEI, PROTOCOL_ID } from './constants.js';
+import { ENS_NAME, DECISION_BLOCK_OFFSET, DECISION_METHOD, ENCOURAGEMENT_TONES, LIMITS, PRICE_WEI, PROTOCOL_ID } from './constants.js';
 import { CatalogSchema, type Catalog } from './schemas.js';
 
 export const DEFAULT_SCHEMA_URL = 'https://raw.githubusercontent.com/kenashe/zerohuman/main/schemas/zh1.schema.json';
@@ -8,6 +8,7 @@ export const DEFAULT_DOCS_URL = 'https://github.com/kenashe/zerohuman/blob/main/
 /** Build the JSON value published in the ENS text record `com.zerohuman.services`. */
 export function buildCatalog(p: {
   seller: Address;
+  name?: string;
   chainId: number;
   status: Catalog['status'];
   confirmations: number;
@@ -17,6 +18,7 @@ export function buildCatalog(p: {
 }): Catalog {
   const catalog: Catalog = {
     v: PROTOCOL_ID,
+    name: p.name ?? ENS_NAME,
     chainId: p.chainId,
     seller: getAddress(p.seller),
     services: {

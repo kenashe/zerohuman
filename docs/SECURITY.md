@@ -48,9 +48,13 @@ RPC responses (partially — see risks).
 - HTTP server is GET/HEAD only, fixed routes, no query handling, no body parsing, request/header timeouts, `nosniff`, `no-referrer`, strict CSP on the dashboard. Nothing reachable from it can sign.
 - Dashboard renders all buyer-supplied text with `textContent` (no HTML injection). Proof verification in the dashboard uses the visitor's chosen RPC, not ZeroHuman's API.
 
+**Identity**
+- `zerohuman.eth`'s ETH address is the seller wallet. The worker signs nothing unless `addr(zerohuman.eth)` equals its own address and the catalog agrees (checked at start and every 10 min). Buyers refuse to pay when the address and catalog disagree, and accept deliveries only from the address they paid.
+- The name is owned by a separate cold wallet, so a server compromise cannot take the name; recovery is one record change.
+
 ## Remaining risks (accepted for v1, ranked)
 
-1. **Hot-wallet compromise.** Anyone who gets shell or env access to the Railway service, or the
+1. **Hot-wallet compromise.** The hot wallet is now *the* address behind `zerohuman.eth`, so all ETH sent to the name accumulates there until swept. Anyone who gets shell or env access to the Railway service, or the
    Railway/GitHub account, can take the key. *Mitigations:* keep the balance tiny (≤ ~0.01 ETH of gas
    float), enable auto-sweep to a cold wallet, 2FA on Railway/GitHub/DeepSeek, restrict project members.
    A remote signer/KMS is the v2 fix.

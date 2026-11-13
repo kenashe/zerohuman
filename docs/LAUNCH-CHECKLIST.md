@@ -28,15 +28,20 @@ no ENS record written, no Railway service deployed, no mainnet transaction sent.
 - [ ] **[YOU]** Fund the test buyer with ~0.002 ETH.
 - [ ] Switch Railway variables: `CHAIN_ID=1`, mainnet `RPC_URL` (keyed + fallback), mainnet `SELLER_PRIVATE_KEY`,
       `START_BLOCK=<current block>`, `CONFIRMATIONS=6`, `BUYER_ALLOWLIST=<test buyer>`, `DEEPSEEK_API_KEY`,
-      optional `SWEEP_TO_ADDRESS`. **Use a fresh volume or a new `DATABASE_PATH`** (never reuse the Sepolia DB).
+      `SWEEP_TO_ADDRESS` (strongly recommended: anything sent to zerohuman.eth lands in the hot wallet). **Use a fresh volume or a new `DATABASE_PATH`** (never reuse the Sepolia DB).
 - [ ] Confirm `/health` is 200 and `/api/status` shows `mode: allowlist`, `chainId: 1`, the expected `seller`.
 
-## D. ENS catalog (requires your approval and signature)
+## D. Make zerohuman.eth the seller (requires your approval and signatures) — see ENS-SETUP.md
 
-- [ ] Generate the value: `SELLER_ADDRESS=0x<seller> CHAIN_ID=1 CATALOG_STATUS=allowlist npm run catalog -- print`.
-- [ ] **[YOU]** In the ENS app, on `zerohuman.eth`, **add** a text record `com.zerohuman.services` with that one-line value.
-      Do **not** change the ETH address record (`0xa5D2…26Ce` today) or any other existing record.
-- [ ] Verify: `RPC_URL=<mainnet> npm run catalog -- check` → `present: true, valid: true`.
+- [ ] Worker is running on mainnet and shows the `ens` pause ("… resolves to 0xa5D2…, not this seller"). Expected.
+- [ ] `SELLER_ADDRESS=0x<seller> RPC_URL=<mainnet> npm run ens -- plan` → copy the target values.
+- [ ] **[YOU]** Confirm nothing still relies on the old address `0xa5D2…26Ce` receiving ETH via the name.
+- [ ] **[YOU]** ENS app, signed by the name owner (cold wallet): set **ETH address = seller** and add text
+      **`com.zerohuman.services` = catalog value**. Leave the other records alone.
+- [ ] **[YOU]** Approve the seller wallet's primary-name transaction (~0.00001 ETH):
+      `… npm run ens -- primary-name --send` with `CONFIRM_SEND=zerohuman.eth`.
+- [ ] `RPC_URL=<mainnet> npm run ens -- check` → `ok: true`, `primaryNameMatches: true`.
+- [ ] Within 10 min `/api/status` shows `identity.ok: true` and the `ens` pause has cleared.
 
 ## E. First real orders (allowlisted)
 
@@ -53,7 +58,3 @@ no ENS record written, no Railway service deployed, no mainnet transaction sent.
 - [ ] Announce the name `zerohuman.eth` + this repository so agents can find it (custom text records are not indexed).
 - [ ] Weekly: `zh-admin review`, sweep check, DeepSeek balance, gas spend.
 
-## G. Only after everything above
-
-- [ ] **[YOU]** Decide whether to change `zerohuman.eth`'s ETH address record. ZeroHuman does not need it
-      (buyers use the catalog `seller` field); leaving it unchanged is fine.

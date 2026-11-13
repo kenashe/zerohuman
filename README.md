@@ -1,7 +1,7 @@
 # ZeroHuman
 
-**Autonomous services for AI agents.** Discover them through ENS, pay 0.0001 ETH, receive the result in
-an Ethereum transaction. No marketplace, no account, no API key, no smart contract, no token.
+**Autonomous services for AI agents at `zerohuman.eth`.** Pay `zerohuman.eth` 0.0001 ETH with your request;
+`zerohuman.eth` sends the result back in an Ethereum transaction. No marketplace, no account, no API key, no smart contract, no token.
 
 | Service | Price | What you get |
 |---|---|---|
@@ -19,18 +19,18 @@ sequenceDiagram
   participant ENS as zerohuman.eth (ENS)
   participant E as Ethereum
   participant Z as ZeroHuman worker
-  A->>ENS: read text record com.zerohuman.services
-  ENS-->>A: seller wallet, chain id, prices, schema URL
-  A->>E: tx → seller, value 0.0001 ETH, data = {"zh":1,"svc":"decision","opts":[…]}
+  A->>ENS: resolve zerohuman.eth + read com.zerohuman.services
+  ENS-->>A: address (= catalog seller), prices, schema URL
+  A->>E: tx → zerohuman.eth, value 0.0001 ETH, data = {"zh":1,"svc":"decision","opts":[…]}
   Z->>E: scan blocks, validate payment + request
-  Z->>E: tx → buyer, value 0, data = {"zh":1,"re":<order tx>,"ok":true,"out":{…}}
+  Z->>E: tx from zerohuman.eth → buyer, value 0, data = {"zh":1,"re":<order tx>,"ok":true,"out":{…}}
   A->>E: find delivery, verify (decision proof recomputed from chain)
 ```
 
-1. **Discover**: read `com.zerohuman.services` on `zerohuman.eth` (any Universal-Resolver/ENSv2-ready client).
-2. **Order**: send exactly the price to the catalog's `seller`, with the request JSON as transaction data.
+1. **Discover**: resolve `zerohuman.eth` and read its `com.zerohuman.services` record (any ENSv2-ready client).
+2. **Order**: send exactly the price **to `zerohuman.eth`**, with the request JSON as transaction data.
    Your order id is your transaction hash.
-3. **Receive**: a zero-value transaction from the seller to you whose data is the JSON response referencing your order.
+3. **Receive**: a zero-value transaction from `zerohuman.eth` to you whose data is the JSON response referencing your order.
 4. **Verify**: with your own RPC; for decisions, `index = uint256(keccak256(blockhash(orderBlock+5) ‖ orderTxHash)) mod n`.
 
 Everything on-chain is public — never send secrets. Decisions are for low-stakes choices only.
@@ -56,6 +56,7 @@ More: [docs/BUYER-GUIDE.md](docs/BUYER-GUIDE.md) (SDK, CLI, and a no-SDK `cast` 
 
 | | |
 |---|---|
+| [ENS-SETUP.md](docs/ENS-SETUP.md) | how `zerohuman.eth` becomes the paying/delivering identity |
 | [PROTOCOL.md](docs/PROTOCOL.md) | `zh/1` wire format, discovery, validation rules, complete request/response examples |
 | [schemas/](schemas/) | machine-readable JSON Schemas (generated from the code) |
 | [DECISION-ALGORITHM.md](docs/DECISION-ALGORITHM.md) | selection algorithm, how to reproduce it, limitations, uniformity test results |
@@ -64,7 +65,7 @@ More: [docs/BUYER-GUIDE.md](docs/BUYER-GUIDE.md) (SDK, CLI, and a no-SDK `cast` 
 | [REFUNDS.md](docs/REFUNDS.md) | best-effort refund policy |
 | [DEPLOYMENT.md](docs/DEPLOYMENT.md) | fresh-wallet setup, Railway, environment variables, operations, dashboard hosting |
 | [COSTS.md](docs/COSTS.md) | measured gas, infrastructure and model costs |
-| [TESTING.md](docs/TESTING.md) | test results (114/114) and how to run them |
+| [TESTING.md](docs/TESTING.md) | test results (120/120) and how to run them |
 | [LAUNCH-CHECKLIST.md](docs/LAUNCH-CHECKLIST.md) | what must happen before mainnet |
 
 ## Running the seller

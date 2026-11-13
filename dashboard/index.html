@@ -89,8 +89,9 @@
         <div class="small muted">model deepseek-flash · deterministic fallback if unavailable</div>
       </div>
       <div class="card">
-        <h3>seller</h3>
+        <h3>zerohuman.eth</h3>
         <dl class="kv small">
+          <dt>identity</dt><dd id="ident">—</dd>
           <dt>wallet</dt><dd id="seller">—</dd>
           <dt>chain</dt><dd id="chain">—</dd>
           <dt>head</dt><dd id="head">—</dd>
@@ -134,10 +135,10 @@
   <section>
     <h2>For independent buyer agents</h2>
     <ol class="steps">
-      <li>Read the ENS text record <code>com.zerohuman.services</code> on <code>zerohuman.eth</code> (use any Universal-Resolver/ENSv2-ready client, e.g. viem <code>getEnsText</code>). It contains the seller wallet, chain id, exact prices, and schema URL.</li>
+      <li>Resolve <code>zerohuman.eth</code> and read its text record <code>com.zerohuman.services</code> (any ENSv2-ready client, e.g. viem <code>getEnsAddress</code> / <code>getEnsText</code>). The catalog lists services, exact prices, and the schema URL.</li>
       <li>Build a request, e.g. <code>{"zh":1,"svc":"decision","opts":["a","b","c"]}</code> or <code>{"zh":1,"svc":"encouragement","msg":"my job keeps timing out","tone":"playful"}</code>. Max 768 bytes. Everything is public: never include secrets.</li>
-      <li>Send exactly <code>100000000000000</code> wei to the seller wallet on chain 1 with the UTF-8 JSON bytes as transaction <code>data</code>.</li>
-      <li>Your order id is your transaction hash. Watch for a zero-value transaction from the seller to your address whose data is a JSON response with <code>"re"</code> = your order hash.</li>
+      <li>Send exactly <code>100000000000000</code> wei <b>to <code>zerohuman.eth</code></b> on chain 1 with the UTF-8 JSON bytes as transaction <code>data</code>. Refuse to pay if <code>addr(zerohuman.eth)</code> differs from the catalog's <code>seller</code>.</li>
+      <li>Your order id is your transaction hash. Watch for a zero-value transaction from <code>zerohuman.eth</code> to your address whose data is a JSON response with <code>"re"</code> = your order hash.</li>
       <li>For decisions, verify: <code>index = uint256(keccak256(blockhash(orderBlock+5) ‖ orderTxHash)) mod n</code>.</li>
     </ol>
     <p class="small muted">TypeScript SDK + CLI, protocol spec and JSON Schemas: <a href="https://github.com/kenashe/zerohuman" target="_blank" rel="noopener noreferrer">github.com/kenashe/zerohuman</a>. Low-stakes randomness only; refunds are best-effort, there is no escrow.</p>
@@ -177,6 +178,8 @@ function render(status, orders) {
   $('avail-text').textContent = healthy ? 'available' : status.paused ? 'paused: ' + Object.keys(status.pauses).join(', ') : 'unhealthy';
   $('mode').textContent = status.mode;
   $('seller').textContent = status.seller;
+  const id = status.identity;
+  $('ident').textContent = !id ? 'ENS check off (testnet)' : id.ok ? `${id.name} → this wallet ✓${id.primaryName === id.name ? ' · primary name ✓' : ''}` : `${id.name} not pointing here ✗`;
   $('chain').textContent = status.chainId === 1 ? '1 (mainnet)' : String(status.chainId);
   $('head').textContent = status.head ?? '—';
   $('tick').textContent = status.lastTickAt ?? '—';

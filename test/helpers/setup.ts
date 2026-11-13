@@ -8,7 +8,7 @@ import { PRICE_WEI } from '../../src/protocol/constants.js';
 import type { ZhRequest } from '../../src/protocol/schemas.js';
 import { LocalSigner } from '../../src/seller/chain.js';
 import { loadConfig, type SellerConfig } from '../../src/seller/config.js';
-import { Engine, type FaultPoint } from '../../src/seller/engine.js';
+import { Engine, type EnsView, type FaultPoint } from '../../src/seller/engine.js';
 import { setLogSink } from '../../src/seller/log.js';
 import { Store } from '../../src/seller/store.js';
 import type { TextProvider } from '../../src/services/llm/provider.js';
@@ -40,7 +40,7 @@ export interface Harness {
   run(ticks: number, until?: () => boolean): Promise<void>;
 }
 
-export function harness(overrides: Record<string, string> = {}, provider: TextProvider | null = new MockProvider()): Harness {
+export function harness(overrides: Record<string, string> = {}, provider: TextProvider | null = new MockProvider(), ens: EnsView | null = null): Harness {
   const chain = new MockChain();
   const sellerKey = generatePrivateKey();
   const seller = privateKeyToAccount(sellerKey).address;
@@ -67,7 +67,7 @@ export function harness(overrides: Record<string, string> = {}, provider: TextPr
   const now = () => clock.t;
   const store = new Store(dbPath);
   const mk = (faultHook?: (p: FaultPoint) => void, instanceId?: string) =>
-    new Engine({ cfg: instanceId ? { ...cfg, instanceId } : cfg, store: h.store, chain, signer: new LocalSigner(sellerKey), provider, now, faultHook });
+    new Engine({ cfg: instanceId ? { ...cfg, instanceId } : cfg, store: h.store, chain, signer: new LocalSigner(sellerKey), provider, now, faultHook, ens });
   const h: Harness = {
     chain,
     cfg,

@@ -83,6 +83,10 @@ check again.
 | `POLL_INTERVAL_MS` | | `6000` | |
 | `LOG_LEVEL` | | `info` | |
 | `PUBLIC_STATUS_URL` | | | informational |
+| `ENS_CHECK` | | `true` on mainnet | refuse to sign unless `addr(ENS_NAME)` = seller and the catalog agrees |
+| `ENS_NAME` | | `zerohuman.eth` | |
+| `ENS_RPC_URL` | | first `RPC_URL` on mainnet | mainnet RPC used for ENS (required if `ENS_CHECK=true` on a testnet) |
+| `ENS_CHECK_INTERVAL_MS` | | `600000` | |
 
 ## 4. Operating
 
