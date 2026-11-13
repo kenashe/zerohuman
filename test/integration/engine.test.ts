@@ -384,12 +384,38 @@ describe('gas and spending limits', () => {
     expect(Object.keys(h.store.pauses())).toContain('order_cap');
   });
 
-  it('operator PAUSED=true blocks all fulfilment', async () => {
+  it('PAUSED=true blocks all fulfilment', async () => {
     const h = harness({ PAUSED: 'true' });
     const order = h.order(encouragementRequest('x'));
     await h.run(6);
     expect(state(h, order)).toBe('confirmed');
     expect(h.chain.sentRaw).toHaveLength(0);
+  });
+});
+
+describe('PAUSED configuration', () => {
+  it('PAUSED=false clears a pause set by PAUSED=true, and fulfilment resumes', async () => {
+    const h = harness({ PAUSED: 'true' });
+    const order = h.order(encouragementRequest('pause toggle'));
+    await h.run(4);
+    expect(h.store.pauses()).toHaveProperty('config');
+    (h.cfg as { operatorPaused: boolean }).operatorPaused = false;
+    h.restart();
+    expect(h.store.pauses()).not.toHaveProperty('config');
+    await h.run(8, () => state(h, order) === 'fulfilled');
+    expect(state(h, order)).toBe('fulfilled');
+  });
+
+  it('migrates the legacy env pause but keeps real operator and security pauses', async () => {
+    const h = harness();
+    h.store.setPause('operator', 'PAUSED env set');
+    h.restart();
+    expect(h.store.pauses()).not.toHaveProperty('operator');
+    h.store.setPause('operator', 'investigating incident');
+    h.store.setPause('nonce', 'unknown transaction');
+    h.restart();
+    expect(h.store.pauses()).toHaveProperty('operator');
+    expect(h.store.pauses()).toHaveProperty('nonce');
   });
 });
 

@@ -20,7 +20,9 @@ const minBig = (a: bigint, b: bigint) => (a < b ? a : b);
 /** Pause kinds that clear themselves when the condition goes away. */
 export const AUTO_PAUSES = ['gas', 'budget', 'balance', 'order_cap', 'rpc', 'ens'] as const;
 /** Pause kinds that require an operator (`zh-admin resume <kind>`). */
-export const MANUAL_PAUSES = ['operator', 'nonce'] as const;
+export const MANUAL_PAUSES = ['operator', 'nonce', 'config'] as const;
+/** Reason recorded by older versions when PAUSED=true was stored as an operator pause. */
+export const LEGACY_ENV_PAUSE_REASON = 'PAUSED env set';
 
 /** Minimal ENS view (mainnet). Implemented with viem in production, faked in tests. */
 export interface EnsView {
@@ -82,7 +84,12 @@ export class Engine {
     this.now = d.now ?? (() => Date.now());
     this.store.now = this.now;
     this.fault = d.faultHook ?? (() => {});
-    if (this.cfg.operatorPaused) this.store.setPause('operator', 'PAUSED env set');
+    // PAUSED is controlled by configuration: it is re-applied or cleared on every start.
+    // It never clears an operator pause set by zh-admin or a security guard.
+    if (this.cfg.operatorPaused) this.store.setPause('config', 'PAUSED=true');
+    else this.store.clearPause('config');
+    const legacy = this.store.pauses().operator;
+    if (!this.cfg.operatorPaused && legacy?.reason === LEGACY_ENV_PAUSE_REASON) this.store.clearPause('operator');
     this.ens = d.ens ?? null;
     if (this.cfg.ens.check) {
       if (!this.ens) throw new Error('ENS check enabled but no ENS view provided');

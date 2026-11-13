@@ -109,7 +109,8 @@ Rules that make this safe:
 
 | Kind | Trigger | Clears |
 |---|---|---|
-| `operator` | `PAUSED=true`, `zh-admin pause`, invariant violation, RPC chain-id mismatch | `zh-admin resume operator` |
+| `config` | `PAUSED=true` | set `PAUSED=false` and redeploy |
+| `operator` | `zh-admin pause`, invariant violation, RPC chain-id mismatch | `zh-admin resume operator` |
 | `nonce` | unknown pending tx from the seller, or nonce consumed by an unknown tx | `zh-admin resume nonce` (after investigation) |
 | `gas` | base fee + tip > `MAX_FEE_PER_GAS_GWEI`, or worst-case delivery cost > `MAX_DELIVERY_COST_WEI` | automatically |
 | `budget` | rolling 24 h gas spend would exceed `DAILY_GAS_BUDGET_WEI` | automatically |
