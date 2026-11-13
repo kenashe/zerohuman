@@ -103,8 +103,9 @@ node dist/cli/admin.js pause "investigating"      # and: resume operator
 
 Logs are JSON lines. Useful filters: `"level":"warn"`, `"msg":"transaction mined"`, `"paused"`.
 
-Note: `PAUSED=true` in variables re-applies the operator pause on every start; remove it before
-`resume operator`.
+`PAUSED` is configuration-controlled: `PAUSED=true` pauses on start and `PAUSED=false` (or removing it)
+clears that pause on the next start. It does **not** clear an `operator` pause set with `zh-admin pause` or
+a security pause such as `nonce`; those still require `zh-admin resume <kind>`.
 
 ## 5. Public dashboard (optional)
 

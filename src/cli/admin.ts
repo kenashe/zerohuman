@@ -80,7 +80,7 @@ switch (cmd) {
     out(store.pauses());
     break;
   case 'resume':
-    if (!_[0]) die('usage: zh-admin resume <operator|nonce|gas|budget|balance|order_cap>');
+    if (!_[0]) die('usage: zh-admin resume <operator|nonce|gas|budget|balance|order_cap>  (config is controlled by PAUSED)');
     store.clearPause(_[0]!);
     out(store.pauses());
     break;
