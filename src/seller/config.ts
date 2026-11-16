@@ -48,6 +48,8 @@ export interface SellerConfig {
   publicBaseUrl: string | null;
   /** ERC-8004 agentId on this chain's Identity Registry, once registered. */
   erc8004AgentId: string | null;
+  /** Domain-verification token for agentpeering.com (served at /.well-known/agentpeering-verify). */
+  agentPeeringVerify: string | null;
   /** Identity guard: addr(name) must equal the seller wallet before anything is signed. */
   ens: { check: boolean; name: string; rpcUrl: string | null; intervalMs: number };
 }
@@ -171,6 +173,8 @@ export function loadConfig(env: Env = process.env): SellerConfig {
     publicStatusUrl: env.PUBLIC_STATUS_URL?.trim() || null,
     publicBaseUrl: (env.PUBLIC_BASE_URL?.trim() || (env.RAILWAY_PUBLIC_DOMAIN?.trim() ? `https://${env.RAILWAY_PUBLIC_DOMAIN.trim()}` : '')).replace(/\/+$/, '') || null,
     erc8004AgentId: env.ERC8004_AGENT_ID?.trim() || null,
+    // Not a secret: it only proves to agentpeering.com that this domain serves ZeroHuman.
+    agentPeeringVerify: env.AGENTPEERING_VERIFY?.trim() || 'ap-verify-ddfe46d0cc52deb749f5c1a8cc3400bc',
     ens: {
       check: bool(env, 'ENS_CHECK', chainId === MAINNET_CHAIN_ID),
       name: env.ENS_NAME?.trim() || ENS_NAME,
@@ -179,6 +183,7 @@ export function loadConfig(env: Env = process.env): SellerConfig {
     },
   };
   if (cfg.publicBaseUrl && !/^https?:\/\/[^\s/]+$/.test(cfg.publicBaseUrl)) throw new ConfigError('PUBLIC_BASE_URL must be an origin like https://host');
+  if (cfg.agentPeeringVerify && !/^[A-Za-z0-9_-]{8,128}$/.test(cfg.agentPeeringVerify)) throw new ConfigError('AGENTPEERING_VERIFY has unexpected characters');
   if (cfg.erc8004AgentId && !/^[0-9]{1,30}$/.test(cfg.erc8004AgentId)) throw new ConfigError('ERC8004_AGENT_ID must be a number');
   if (cfg.ens.check && !cfg.ens.rpcUrl) throw new ConfigError('ENS_RPC_URL (a mainnet RPC) is required when ENS_CHECK is on outside mainnet');
   if (cfg.llm.provider === 'deepseek' && !cfg.llm.apiKey) throw new ConfigError('DEEPSEEK_API_KEY is required when LLM_PROVIDER=deepseek');

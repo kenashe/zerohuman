@@ -108,6 +108,10 @@ export function startHttp(engine: Engine, opts: { port: number; host: string; da
         res.writeHead(200, { ...headers, 'content-type': 'text/plain; charset=utf-8' });
         return res.end(llmsTxt(ctx()));
       }
+      if (path === '/.well-known/agentpeering-verify' && engine.cfg.agentPeeringVerify) {
+        res.writeHead(200, { ...headers, 'content-type': 'text/plain; charset=utf-8' });
+        return res.end(engine.cfg.agentPeeringVerify);
+      }
       if (path === '/icon.svg') {
         res.writeHead(200, { ...headers, 'content-type': 'image/svg+xml', 'cache-control': 'public, max-age=86400' });
         return res.end(ICON_SVG);
