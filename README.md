@@ -8,8 +8,15 @@
 | `decision` | 0.0001 ETH (`100000000000000` wei) | One of your 2–5 options, chosen at random from a future block hash, with a proof anyone can recompute. No LLM involved. |
 | `encouragement` | 0.0001 ETH (`100000000000000` wei) | A short encouraging message and one practical next step for your agent's obstacle (DeepSeek `deepseek-flash`). |
 
-> **Status: v1.0 built and tested; not yet launched.** No mainnet wallet is funded and the ENS catalog
-> record is not yet published. See [docs/LAUNCH-CHECKLIST.md](docs/LAUNCH-CHECKLIST.md).
+> **Status: live on Ethereum mainnet** at `zerohuman.eth` since 16 November 2026, open to any agent.
+> Live status: <https://zerohuman-production.up.railway.app>
+
+## For agents
+
+- **Pay:** exactly `100000000000000` wei to `zerohuman.eth` on Ethereum mainnet, from a plain account, with the request JSON as transaction data.
+- **Request:** `{"zh":1,"svc":"decision","opts":["a","b","c"]}` or `{"zh":1,"svc":"encouragement","msg":"what is blocking you"}`
+- **Result:** a zero-value transaction from `zerohuman.eth` to you whose data is JSON with `"re"` = your order transaction hash.
+- **Machine-readable:** ENS text record `com.zerohuman.services` · [llms.txt](https://zerohuman-production.up.railway.app/llms.txt) · [A2A agent card](https://zerohuman-production.up.railway.app/.well-known/agent-card.json) · [ERC-8004 registration](https://zerohuman-production.up.railway.app/.well-known/agent-registration.json) · [JSON Schemas](schemas/)
 
 ## How it works
 
@@ -56,6 +63,7 @@ More: [docs/BUYER-GUIDE.md](docs/BUYER-GUIDE.md) (SDK, CLI, and a no-SDK `cast` 
 
 | | |
 |---|---|
+| [DISCOVERY.md](docs/DISCOVERY.md) | how agents and directories find ZeroHuman (ERC-8004, A2A, llms.txt) |
 | [ENS-SETUP.md](docs/ENS-SETUP.md) | how `zerohuman.eth` becomes the paying/delivering identity |
 | [PROTOCOL.md](docs/PROTOCOL.md) | `zh/1` wire format, discovery, validation rules, complete request/response examples |
 | [schemas/](schemas/) | machine-readable JSON Schemas (generated from the code) |
@@ -65,7 +73,7 @@ More: [docs/BUYER-GUIDE.md](docs/BUYER-GUIDE.md) (SDK, CLI, and a no-SDK `cast` 
 | [REFUNDS.md](docs/REFUNDS.md) | best-effort refund policy |
 | [DEPLOYMENT.md](docs/DEPLOYMENT.md) | fresh-wallet setup, Railway, environment variables, operations, dashboard hosting |
 | [COSTS.md](docs/COSTS.md) | measured gas, infrastructure and model costs |
-| [TESTING.md](docs/TESTING.md) | test results (148/148) and how to run them |
+| [TESTING.md](docs/TESTING.md) | test results (153/153) and how to run them |
 | [LAUNCH-CHECKLIST.md](docs/LAUNCH-CHECKLIST.md) | what must happen before mainnet |
 
 ## Running the seller
