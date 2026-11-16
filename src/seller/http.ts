@@ -3,10 +3,15 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { PRICE_WEI, PROTOCOL_ID, DECISION_BLOCK_OFFSET, DECISION_METHOD } from '../protocol/constants.js';
 import type { Engine } from './engine.js';
+import { buildCatalog } from '../protocol/catalog.js';
+import { agentCard, agentRegistration, handleA2a, ICON_SVG, llmsTxt, type DocsContext } from './agentdocs.js';
+
+const MAX_A2A_BODY = 4096;
 
 /**
- * Read-only HTTP surface: GET only, fixed routes, no query parameters are interpreted,
- * no request bodies are read, nothing here can reach the signer. Exposes the data
+ * Read-only HTTP surface: fixed routes, no query parameters are interpreted, nothing here
+ * can reach the signer. GET only, except POST /a2a/v1 (stateless A2A "how to order" replies,
+ * body capped at 4 KB). Exposes the data
  * the public dashboard needs (all of which is already public on-chain).
  */
 export function publicOrders(engine: Engine, limit = 50) {
@@ -52,22 +57,61 @@ export function startHttp(engine: Engine, opts: { port: number; host: string; da
     'cache-control': 'no-store',
     'access-control-allow-origin': '*',
   };
+  const ctx = (): DocsContext => ({ baseUrl: engine.cfg.publicBaseUrl, seller: engine.seller, chainId: engine.cfg.chainId, agentId: engine.cfg.erc8004AgentId, ensName: engine.cfg.ens.name });
+  const catalog = () => buildCatalog({ seller: engine.seller, name: engine.cfg.ens.name, chainId: engine.cfg.chainId, status: engine.cfg.allowlist ? 'allowlist' : 'live', confirmations: engine.cfg.confirmations });
   const server = createServer((req, res) => {
-    if (req.method !== 'GET' && req.method !== 'HEAD') {
-      res.writeHead(405, { ...headers, allow: 'GET, HEAD' }).end();
-      return;
-    }
     const path = (req.url ?? '/').split('?')[0];
     const json = (code: number, body: unknown) => {
       res.writeHead(code, { ...headers, 'content-type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(body, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)));
     };
+    if (req.method === 'POST' && path === '/a2a/v1') {
+      let size = 0;
+      const chunks: Buffer[] = [];
+      req.on('data', (c: Buffer) => {
+        size += c.length;
+        if (size > MAX_A2A_BODY) {
+          json(413, { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'request too large' } });
+          req.destroy();
+        } else chunks.push(c);
+      });
+      req.on('end', () => {
+        if (size > MAX_A2A_BODY) return;
+        let body: unknown = null;
+        try {
+          body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        } catch {
+          return json(400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } });
+        }
+        try {
+          const r = handleA2a(body, ctx(), catalog());
+          json(r.status, r.body);
+        } catch {
+          json(500, { jsonrpc: '2.0', id: null, error: { code: -32603, message: 'Internal error' } });
+        }
+      });
+      return;
+    }
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.writeHead(405, { ...headers, allow: 'GET, HEAD' }).end();
+      return;
+    }
     try {
       if (path === '/health') {
         const s = engine.status();
         return json(s.healthy ? 200 : 503, { ok: s.healthy, lastTickAt: s.lastTickAt, paused: s.paused });
       }
       if (path === '/api/status') return json(200, publicStatus(engine));
+      if (path === '/.well-known/agent-registration.json') return json(200, agentRegistration(ctx()));
+      if (path === '/.well-known/agent-card.json' || path === '/.well-known/agent.json') return json(200, agentCard(ctx()));
+      if (path === '/llms.txt') {
+        res.writeHead(200, { ...headers, 'content-type': 'text/plain; charset=utf-8' });
+        return res.end(llmsTxt(ctx()));
+      }
+      if (path === '/icon.svg') {
+        res.writeHead(200, { ...headers, 'content-type': 'image/svg+xml', 'cache-control': 'public, max-age=86400' });
+        return res.end(ICON_SVG);
+      }
       if (path === '/api/orders') return json(200, { orders: publicOrders(engine) });
       if ((path === '/' || path === '/index.html') && dashboard) {
         res.writeHead(200, {

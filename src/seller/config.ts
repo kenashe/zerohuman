@@ -44,6 +44,10 @@ export interface SellerConfig {
   instanceId: string;
   leaseTtlMs: number;
   publicStatusUrl: string | null;
+  /** Public base URL of this worker, used in discovery documents. */
+  publicBaseUrl: string | null;
+  /** ERC-8004 agentId on this chain's Identity Registry, once registered. */
+  erc8004AgentId: string | null;
   /** Identity guard: addr(name) must equal the seller wallet before anything is signed. */
   ens: { check: boolean; name: string; rpcUrl: string | null; intervalMs: number };
 }
@@ -165,6 +169,8 @@ export function loadConfig(env: Env = process.env): SellerConfig {
     instanceId: env.RAILWAY_DEPLOYMENT_ID?.trim() || env.INSTANCE_ID?.trim() || `local-${process.pid}-${Date.now()}`,
     leaseTtlMs: int(env, 'LEASE_TTL_MS', 90_000, 5_000),
     publicStatusUrl: env.PUBLIC_STATUS_URL?.trim() || null,
+    publicBaseUrl: (env.PUBLIC_BASE_URL?.trim() || (env.RAILWAY_PUBLIC_DOMAIN?.trim() ? `https://${env.RAILWAY_PUBLIC_DOMAIN.trim()}` : '')).replace(/\/+$/, '') || null,
+    erc8004AgentId: env.ERC8004_AGENT_ID?.trim() || null,
     ens: {
       check: bool(env, 'ENS_CHECK', chainId === MAINNET_CHAIN_ID),
       name: env.ENS_NAME?.trim() || ENS_NAME,
@@ -172,6 +178,8 @@ export function loadConfig(env: Env = process.env): SellerConfig {
       intervalMs: int(env, 'ENS_CHECK_INTERVAL_MS', 600_000, 10_000),
     },
   };
+  if (cfg.publicBaseUrl && !/^https?:\/\/[^\s/]+$/.test(cfg.publicBaseUrl)) throw new ConfigError('PUBLIC_BASE_URL must be an origin like https://host');
+  if (cfg.erc8004AgentId && !/^[0-9]{1,30}$/.test(cfg.erc8004AgentId)) throw new ConfigError('ERC8004_AGENT_ID must be a number');
   if (cfg.ens.check && !cfg.ens.rpcUrl) throw new ConfigError('ENS_RPC_URL (a mainnet RPC) is required when ENS_CHECK is on outside mainnet');
   if (cfg.llm.provider === 'deepseek' && !cfg.llm.apiKey) throw new ConfigError('DEEPSEEK_API_KEY is required when LLM_PROVIDER=deepseek');
   if (cfg.sweep && cfg.sweep.keepWei >= cfg.sweep.aboveWei) throw new ConfigError('SWEEP_KEEP_WEI must be below SWEEP_ABOVE_WEI');
