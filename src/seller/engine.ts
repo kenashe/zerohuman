@@ -12,6 +12,16 @@ import { logger } from './log.js';
 import type { AttemptRow, OrderRow, OutboxRow, Store } from './store.js';
 
 const DAY_MS = 86_400_000;
+
+/** Intrinsic gas of a plain call carrying `data`, including the EIP-7623 calldata floor. */
+export function intrinsicGas(data: Hex): bigint {
+  let zero = 0n;
+  let nonzero = 0n;
+  for (let i = 2; i < data.length; i += 2) (data.slice(i, i + 2) === '00' ? zero++ : nonzero++);
+  const standard = 21000n + zero * 4n + nonzero * 16n;
+  const floor = 21000n + (zero + nonzero * 4n) * 10n;
+  return standard > floor ? standard : floor;
+}
 const lc = (a: string) => a.toLowerCase();
 const today = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 const ceilPct = (v: bigint, pct: number) => (v * BigInt(100 + pct) + 99n) / 100n;
@@ -281,7 +291,11 @@ export class Engine {
     const d = decodeResponse(input);
     if (!d.ok) return;
     const order = this.store.getOrder(d.value.re);
-    if (!order) return;
+    if (!order) {
+      // The order may sit in a block the scanner has not reached yet (rebuilt database).
+      this.store.rememberOwnDelivery(d.value.re, hash, input);
+      return;
+    }
     const knownAttempt = this.store.db.prepare('SELECT 1 FROM attempts WHERE tx_hash = ?').get(hash);
     if (knownAttempt) return; // normal reconcile path handles our own recorded attempts
     if (order.state === 'fulfilled') {
@@ -309,11 +323,11 @@ export class Engine {
         ? { state: 'needs_review', reason: 'missing_request_data', refund: true }
         : { state: 'ignored', reason: 'plain_transfer', refund: false };
     }
-    if (o.chain_id !== this.cfg.chainId) return { state: 'needs_review', reason: 'missing_or_wrong_chain_id', refund: true };
-    // Zero-value requests cost an attacker almost nothing; never let them reach the review queue.
+    // Zero-value and underpaid requests cost almost nothing to send; ignore them before any
+    // check that could put them in the review queue (documented in REFUNDS.md).
     if (value === 0n) return { state: 'ignored', reason: 'unpaid_request', refund: false };
-    // Underpayments are ignored like tips (documented in REFUNDS.md); only overpayments are reviewed.
     if (value < PRICE_WEI) return { state: 'ignored', reason: 'underpaid', refund: false };
+    if (o.chain_id !== this.cfg.chainId) return { state: 'needs_review', reason: 'missing_or_wrong_chain_id', refund: true };
     if (value !== PRICE_WEI) return { state: 'needs_review', reason: 'wrong_amount', refund: true };
     if (this.cfg.allowlist && !this.cfg.allowlist.has(lc(o.buyer))) return { state: 'needs_review', reason: 'buyer_not_allowlisted', refund: true };
     return { state: 'confirmed', reason: null, refund: false };
@@ -375,6 +389,11 @@ export class Engine {
     if (cursor === null || safeHead - cursor > BigInt(this.cfg.maxBlocksPerTick)) return null;
     await this.scanUnconfirmedOwnTxsOnce(cursor, head);
     for (const o of this.store.ordersInState('confirmed', 25)) {
+      const seen = this.store.ownDeliveryFor(o.hash);
+      if (seen && !this.store.hasAttempt(seen.tx_hash)) {
+        this.store.setOrderState(o.hash, 'fulfilled', 'adopted_from_chain', { delivery_tx: seen.tx_hash as Hex, response_hex: seen.input as Hex, fulfilled_at: this.now() });
+        continue;
+      }
       const decoded = decodeRequest(o.input);
       let res: ZhResponse;
       let resultJson: string | null = null;
@@ -474,7 +493,10 @@ export class Engine {
     // A sweep in review needs the operator; do not queue another every tick (F8).
     const pendingSweep = this.store.db.prepare("SELECT id FROM outbox WHERE kind = 'sweep' AND status IN ('queued','signed','review')").get();
     if (pendingSweep) return;
-    const value = bal - s.keepWei;
+    const reserved = this.store.pendingRefundWei();
+    if (bal <= s.aboveWei + reserved) return;
+    const value = bal - s.keepWei - reserved;
+    if (value <= 0n) return;
     this.store.enqueue({ kind: 'sweep', order_hash: null, to_addr: s.to, value, data: '0x' });
     this.store.event('info', 'sweep_queued', null, `value ${value} to ${s.to}`);
   }
@@ -566,7 +588,9 @@ export class Engine {
     // ---- balance before estimation, so an oversized refund pauses instead of erroring (F7).
     const bal = await this.chain.getBalance(this.seller);
     if (bal < BigInt(item.value) + this.cfg.gas.minBalanceWei) {
-      this.store.setPause('balance', `balance ${bal} below value ${item.value}`);
+      // A refund (or sweep) the wallet cannot cover waits without blocking deliveries (R1).
+      this.store.updateOutbox(item.id, { retry_at: this.now() + 300_000 });
+      this.store.event('warn', 'insufficient_balance', item.order_hash, `${item.kind} of ${item.value} wei waits: balance ${bal}`);
       return null;
     }
 
@@ -585,7 +609,9 @@ export class Engine {
       return null;
     }
     // Plain-account deliveries are deterministic: the exact estimate is the limit, so nothing extra can run.
-    const gasLimit = item.kind === 'delivery' ? est : minBig(this.cfg.gas.deliveryGasLimitCap, (est * 11n) / 10n + 1n);
+    const floor = intrinsicGas(item.data);
+    const exact = est > floor ? est : floor; // do not depend on the RPC's estimate being right
+    const gasLimit = item.kind === 'delivery' ? exact : minBig(this.cfg.gas.deliveryGasLimitCap, (exact * 11n) / 10n + 1n);
     const worst = gasLimit * maxFee;
 
     // ---- this order alone too expensive (e.g. a maximum-size response): defer it, keep serving others (F2).
@@ -617,6 +643,12 @@ export class Engine {
     // and treat a chain nonce that lags our own record as a stale RPC read, not as an attack.
     const latest = await this.chain.getNonce(this.seller, 'latest');
     const pending = await this.chain.getNonce(this.seller, 'pending');
+    if (this.store.getMeta('nonce_resync') !== null) {
+      // Set by `zh-admin resume nonce`: the operator has reviewed the wallet; adopt the chain's nonce.
+      this.store.setMeta('next_nonce', String(latest));
+      this.store.delMeta('nonce_resync');
+      this.store.event('info', 'nonce_resynced', null, `adopted chain nonce ${latest} after operator review`);
+    }
     const recorded = this.store.getMeta('next_nonce');
     const maxSigned = this.store.maxSignedNonce();
     const expected = Math.max(recorded === null ? 0 : Number(recorded), maxSigned === null ? 0 : maxSigned + 1);
@@ -633,7 +665,7 @@ export class Engine {
       return null;
     }
     if (recorded !== null && latest > expected) {
-      this.store.setPause('nonce', `seller wallet nonce ${latest} is ahead of this worker's records (${expected}): someone else sent from the wallet — investigate; pause with PAUSED=true before using the wallet yourself`);
+      this.store.setPause('nonce', `seller wallet nonce ${latest} is ahead of this worker's records (${expected}): a transaction was sent from the wallet outside this worker, or the database was restored from an older backup — investigate, then zh-admin resume nonce`);
       return null;
     }
     const nonce = latest;
@@ -684,7 +716,8 @@ export class Engine {
   dailyBudget(): bigint {
     const revenue = this.store.revenueSince(this.now() - DAY_MS, PRICE_WEI);
     const share = (revenue * BigInt(this.cfg.gas.revenueBudgetPercent)) / 100n;
-    return share > this.cfg.gas.dailyGasBudgetWei ? share : this.cfg.gas.dailyGasBudgetWei;
+    const b = share > this.cfg.gas.dailyGasBudgetWei ? share : this.cfg.gas.dailyGasBudgetWei;
+    return b < this.cfg.gas.dailyGasBudgetMaxWei ? b : this.cfg.gas.dailyGasBudgetMaxWei;
   }
 
   /** Keep the gas pause flag honest while idle so the dashboard is accurate. */
@@ -753,8 +786,14 @@ export class Engine {
           return 'done';
         }
       }
-      // Allow a grace period for lagging RPC nodes before raising the alarm.
-      if (this.now() - last.created_at < 120_000) return 'pending';
+      // Allow a grace period, counted from when we FIRST saw the nonce consumed, for a lagging
+      // receipt read. Every tick re-checks this item's receipts above, so a late receipt wins (R3).
+      const key = `nonce_seen:${item.id}`;
+      const firstSeen = Number(this.store.getMeta(key) ?? this.now());
+      this.store.setMeta(key, String(firstSeen));
+      if (this.now() - firstSeen < 120_000) return 'pending';
+      for (const a of attempts) if (await this.chain.getReceipt(a.tx_hash)) return 'pending'; // final re-check
+      this.store.delMeta(key);
       this.toReview(item, `nonce ${item.nonce} consumed by an unknown transaction`);
       this.store.setPause('nonce', `nonce ${item.nonce} consumed by unknown tx — investigate possible key compromise`);
       return 'done';
@@ -797,6 +836,7 @@ export class Engine {
   }
 
   private finalize(item: OutboxRow, a: AttemptRow, r: ChainReceipt): void {
+    this.store.delMeta(`nonce_seen:${item.id}`);
     const cost = r.gasUsed * r.effectiveGasPrice;
     const ok = r.status === 'success';
     this.store.tx(() => {

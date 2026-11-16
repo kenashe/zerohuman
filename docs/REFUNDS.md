@@ -23,8 +23,9 @@ delivery or a refund. Buyers risk the 0.0001 ETH they send.
 - Always to the **original sender** of the order transaction, for **exactly** the amount it paid.
   The seller pays the refund's gas.
 - Refund transactions go through the same guarded outbox as deliveries (gas caps, budget, invariants).
-  A refund that cannot be paid (insufficient balance) pauses until the wallet is topped up; one that
-  reverts is marked `failed` and can be retried with `zh-admin refund-retry`.
+  A refund the wallet cannot cover waits (re-checked every 5 minutes) without holding up deliveries,
+  and goes out once the wallet is topped up. One that reverts is marked `failed` and can be retried
+  with `zh-admin refund-retry`. Automatic sweeps always leave enough for pending refunds.
 - Target: reviewed within 7 days while the service is operating. No guarantee.
 
 ## Requesting a refund

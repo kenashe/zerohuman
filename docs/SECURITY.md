@@ -106,6 +106,15 @@ hardening PR:
 | F14 Pauses did not stop fee-bump re-signing | **Fixed** (identical re-broadcasts still happen) |
 | F15 RPC URLs could appear in fatal logs | **Fixed.** `main` branch protection is an operator setting (see checklist) |
 
+A re-review of `af3f0d0` confirmed F1–F6 closed and found nine smaller problems in the fixes (R1–R9), all fixed
+next: an unpayable refund no longer blocks deliveries (R1); `zh-admin resume nonce` re-syncs the nonce (R2); a
+late receipt read no longer raises a false compromise alarm (R3); a rebuilt database remembers its own deliveries
+whose orders it has not scanned yet (R4); `refund-retry` and `approve-refund` work for reverted refunds and
+deliveries (R5, R6); cheap payments without a chain id are ignored (R7); the SDK refuses to pay from an address
+with code (R8); sweeps reserve pending refunds and `zh-admin sweep-clear` dismisses stuck sweeps (R9). Also: the
+gas limit is never below the locally computed intrinsic cost; the revenue-scaled budget is capped at
+`DAILY_GAS_BUDGET_MAX_WEI` (0.05 ETH); obfuscated links like `evil[.]example` are rejected in options.
+
 Still open: the hot-wallet key lives on Railway (risk #1); there is no escrow (risk #2); the worker trusts its
 RPC for what it observes (use a reputable keyed provider plus a fallback); the catalog's `status` field is
 informational and the worker enforces access with `BUYER_ALLOWLIST` / `PUBLIC_BUYERS`.

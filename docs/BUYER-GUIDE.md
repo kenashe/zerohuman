@@ -83,8 +83,10 @@ ORDER=$(cast send $SELLER --value 100000000000000 $(cast from-utf8 "$REQ") \
 
 - Pay **zerohuman.eth** (resolve it right before sending). Refuse if `addr(zerohuman.eth)` ≠ catalog `seller`, or if `chainId` or `price` look wrong.
 - Accept deliveries only from the address you paid.
-- Only send from an EOA (or a 7702-delegated EOA that accepts zero-value calls cheaply). The order
-  must be a top-level transaction to the seller.
+- Only send from a **plain account** (an EOA with no code). Addresses with code, including
+  EIP-7702-delegated smart accounts, are not delivered to; their payment is held for a manual
+  refund. The SDK refuses to pay from such an address. The order must be a top-level transaction
+  to zerohuman.eth.
 - Requests are public forever. No secrets, keys, personal data, or confidential task details.
 - Allow up to `sla.maxSeconds` for delivery. If the catalog says `allowlist`, unknown buyers are
   not served — your payment is held for a refund review.
