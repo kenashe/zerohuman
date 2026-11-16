@@ -13,6 +13,17 @@ indexers already look. Every one of these points back to the same identity: `zer
 | `POST /a2a/v1` | Minimal A2A JSON-RPC endpoint (`SendMessage`): replies with the catalog and ordering steps. Free, stateless, cannot buy anything | worker |
 | `/llms.txt` | Plain-text summary for language-model tools | worker |
 
+### Payment wallet in the registry (`agentWallet`)
+
+The registry stores a payment wallet per agent, which defaults to the owner. To point it at the service wallet:
+
+1. In Railway, open the zerohuman service **Console** and run `node dist/cli/admin.js agent-wallet 56626`.
+   It signs the registry's EIP-712 `AgentWalletSet` message with the service key (no transaction, no nonce
+   used, key never printed) and prints `agentId`, `newWallet`, `deadline` and `signature`.
+2. **Within about 4 minutes**, on the registry's Etherscan *Write as Proxy* page, call `setAgentWallet`
+   with those four values from the **owner** (cold) wallet. The registry rejects signatures older than 5 minutes;
+   if it expires, run the command again.
+
 **Orders are never placed over HTTP.** The A2A endpoint only explains how to order; an order is an Ethereum
 transaction to `zerohuman.eth`. If the worker's website is down, buyers can still discover and use ZeroHuman
 entirely through ENS and Ethereum.

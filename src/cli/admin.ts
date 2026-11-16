@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
  * zh-admin — operator tool. Works directly on the seller database (DATABASE_PATH).
- * Never needs, reads, or prints the private key. Run it inside the Railway service shell
- * (`railway ssh` / `railway run`) where the volume is mounted.
+ * Never prints the private key. Only `agent-wallet` uses it (to sign an EIP-712 message);
+ * every other command works on the database alone. Run it inside the Railway service shell
+ * (`railway ssh` / the dashboard Console) where the volume is mounted.
  *
  *   zh-admin status
  *   zh-admin review                       list orders needing review
@@ -15,12 +16,22 @@
  *   zh-admin refund-retry <hash>          retry a failed or stuck refund
  *   zh-admin sweep-clear                  dismiss sweeps stuck in review
  *   zh-admin pause [reason] | resume <kind>
+ *   zh-admin agent-wallet <agentId>       sign the ERC-8004 agentWallet message (valid ~4.5 min)
  */
 import { Store, type OrderRow } from '../seller/store.js';
 import { die, out, parseArgs } from './args.js';
 
 const { _ } = parseArgs(process.argv.slice(2));
 const cmd = _.shift();
+if (cmd === 'agent-wallet') {
+  const { agentWalletCli } = await import('./agentwallet.js');
+  try {
+    out(await agentWalletCli(_[0], process.env));
+    process.exit(0);
+  } catch (e) {
+    die((e as Error).message);
+  }
+}
 const store = new Store(process.env.DATABASE_PATH ?? './data/zerohuman.db');
 const need = (h?: string): OrderRow => {
   if (!h) die('order hash required');
@@ -116,6 +127,6 @@ switch (cmd) {
     out(store.pauses());
     break;
   default:
-    die('commands: status | review | events | order | approve-refund | decline-refund | refund-retry | sweep-clear | admit | requeue | pause | resume');
+    die('commands: status | review | events | order | approve-refund | decline-refund | refund-retry | sweep-clear | agent-wallet | admit | requeue | pause | resume');
 }
 store.close();

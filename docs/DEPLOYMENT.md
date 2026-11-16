@@ -88,6 +88,7 @@ check again.
 | `LOG_LEVEL` | | `info` | |
 | `PUBLIC_STATUS_URL` | | | informational |
 | `PUBLIC_BASE_URL` | | `https://$RAILWAY_PUBLIC_DOMAIN` | origin used in the discovery documents (agent card, ERC-8004 file, llms.txt) |
+| `AGENTPEERING_VERIFY` | | built-in token | agentpeering.com domain-verification token served at `/.well-known/agentpeering-verify` |
 | `ERC8004_AGENT_ID` | | | the agentId minted in the ERC-8004 Identity Registry; adds the registry back-reference to `/.well-known/agent-registration.json` |
 | `ENS_CHECK` | | `true` on mainnet | refuse to sign unless `addr(ENS_NAME)` = seller and the catalog agrees |
 | `ENS_NAME` | | `zerohuman.eth` | |

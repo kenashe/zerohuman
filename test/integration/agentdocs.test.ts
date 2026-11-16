@@ -41,6 +41,7 @@ describe('agent discovery documents (served by the worker)', () => {
     const t = await (await fetch(`${base}/llms.txt`)).text();
     expect(t).toMatch(/Send exactly 100000000000000 wei to zerohuman\.eth/);
     expect(t).toMatch(/ERC-8004: agent 4242/);
+    expect(await (await fetch(`${base}/.well-known/agentpeering-verify`)).text()).toBe('ap-verify-ddfe46d0cc52deb749f5c1a8cc3400bc');
     const i = await fetch(`${base}/icon.svg`);
     expect(i.headers.get('content-type')).toBe('image/svg+xml');
   });

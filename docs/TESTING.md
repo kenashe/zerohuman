@@ -11,7 +11,7 @@ foundry anvil 1.5.1. All numbers below are from the final run of the committed c
 | Unit (protocol, decision, encouragement, DeepSeek adapter, config, logger, catalog, schemas) | `npm test` | ✅ 75 / 75 |
 | Integration (full seller state machine on an in-memory chain with fault injection; ENS identity guard; PAUSED toggle; 26 regression tests for the 2026-11-16 review and re-review findings) | `npm test` | ✅ 66 / 66 |
 | End-to-end on a real EVM (anvil, fresh random wallets, public SDK as buyer) | `npm run test:e2e` | ✅ 7 / 7 |
-| **Total** | `npm run test:all` | **✅ 153 / 153** |
+| **Total** | `npm run test:all` | **✅ 154 / 154** |
 | Compiled production entrypoint smoke test (`node dist/seller/main.js` + `zh-buyer` + `zh-admin`) | manual | ✅ both services delivered and verified; private key found 0 times in logs |
 | Mainnet read-only checks | `npm run catalog -- check`, `npm run shadow-scan` | ✅ ENS Universal Resolver read of `zerohuman.eth`; 21 live blocks / 5,415 txs (legacy, 2930, 1559, 4844, 7702) parsed and classified |
 | Primary-name transaction rehearsal on a **mainnet fork** (anvil `--fork-url`) | `npm run ens -- primary-name --send` | ✅ fresh wallet's reverse record = `zerohuman.eth`, 114,042 gas |

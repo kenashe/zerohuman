@@ -73,7 +73,7 @@ More: [docs/BUYER-GUIDE.md](docs/BUYER-GUIDE.md) (SDK, CLI, and a no-SDK `cast` 
 | [REFUNDS.md](docs/REFUNDS.md) | best-effort refund policy |
 | [DEPLOYMENT.md](docs/DEPLOYMENT.md) | fresh-wallet setup, Railway, environment variables, operations, dashboard hosting |
 | [COSTS.md](docs/COSTS.md) | measured gas, infrastructure and model costs |
-| [TESTING.md](docs/TESTING.md) | test results (153/153) and how to run them |
+| [TESTING.md](docs/TESTING.md) | test results (154/154) and how to run them |
 | [LAUNCH-CHECKLIST.md](docs/LAUNCH-CHECKLIST.md) | what must happen before mainnet |
 
 ## Running the seller
