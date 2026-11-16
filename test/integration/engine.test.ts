@@ -449,7 +449,9 @@ describe('stuck transactions and nonce safety', () => {
     // Someone else uses the seller key with the same nonce; our tx is evicted.
     h.chain.mempool.clear();
     h.chain.nonces.set(h.seller.toLowerCase(), (h.chain.nonces.get(h.seller.toLowerCase()) ?? 0) + 1);
-    h.clock.t += 120_000;
+    await h.engine.tick(); // first sees the nonce consumed: grace starts now (R3)
+    expect(Object.keys(h.store.pauses())).not.toContain('nonce');
+    h.clock.t += 121_000;
     await h.engine.tick();
     expect(Object.keys(h.store.pauses())).toContain('nonce');
     expect(state(h, order)).toBe('needs_review');
@@ -646,16 +648,19 @@ describe('review hardening', () => {
     expect(BigInt(att.gas_limit)).toBe(BigInt(out.gas_used!));
   });
 
-  it('F7: a refund larger than the balance pauses for balance and resumes after top-up', async () => {
+  it('F7/R1: a refund larger than the balance waits without blocking deliveries, then pays after top-up', async () => {
     const h = harness();
     const o = h.order(decisionRequest(['a', 'b']), { value: 10n ** 18n / 2n }); // 0.5 ETH overpayment
     await h.run(6);
     h.chain.balances.set(h.seller.toLowerCase(), 10n ** 15n); // it was swept away
     h.store.updateOrder(o, { refund_status: 'approved' });
-    await h.run(6);
-    expect(h.store.pauses()).toHaveProperty('balance');
+    await h.run(3);
+    const later = h.order(ENC('delivery behind the refund'));
+    await h.run(12, () => state(h, later) === 'fulfilled');
+    expect(state(h, later)).toBe('fulfilled');
     expect(h.store.getOrder(o)!.refund_status).toBe('queued');
     h.chain.fund(h.seller, 10n ** 18n);
+    h.clock.t += 301_000;
     await h.run(8, () => h.store.getOrder(o)!.refund_status === 'sent');
     expect(h.store.getOrder(o)!.refund_status).toBe('sent');
   });
@@ -760,5 +765,112 @@ describe('re-signing', () => {
     await h.run(8, () => state(h, a) === 'fulfilled');
     expect(state(h, a)).toBe('fulfilled');
     expect(h.store.attemptsFor(item.id)).toHaveLength(1);
+  });
+});
+
+describe('re-review hardening (R1–R9)', () => {
+  const ENC = (m: string) => encouragementRequest(m);
+
+  it('R2: after a "nonce ahead of records" alarm, zh-admin resume nonce lets the worker continue', async () => {
+    const h = harness();
+    const a = h.order(ENC('before'));
+    await h.run(10, () => state(h, a) === 'fulfilled');
+    h.chain.inject({ from: h.seller, to: h.buyer, value: 1n }); // operator forgot to pause first
+    h.chain.mine();
+    const b = h.order(ENC('after'));
+    await h.run(6);
+    expect(h.store.pauses()).toHaveProperty('nonce');
+    // exactly what `zh-admin resume nonce` does:
+    h.store.clearPause('nonce');
+    h.store.setMeta('nonce_resync', '1');
+    await h.run(10, () => state(h, b) === 'fulfilled');
+    expect(state(h, b)).toBe('fulfilled');
+    expect(h.store.pauses()).not.toHaveProperty('nonce');
+  });
+
+  it('R3: a slow delivery whose receipt is read stale once is finalized, not flagged as compromise', async () => {
+    const h = harness({ STUCK_AFTER_MS: '3600000' });
+    const a = h.order(ENC('slow'));
+    h.chain.mine();
+    h.chain.minTipToMine = 10n ** 15n;
+    await h.run(30, () => h.store.inFlight() !== null);
+    for (let i = 0; i < 12; i++) { await h.engine.tick(); h.chain.mine(); h.clock.t += 12_000; } // unmined ~144 s
+    h.chain.minTipToMine = 0n;
+    h.chain.mine();
+    h.clock.t += 12_000;
+    const orig = h.chain.getReceipt.bind(h.chain);
+    let n = 0;
+    h.chain.getReceipt = async (x) => (n++ < 1 ? null : orig(x));
+    await h.run(8, () => state(h, a) === 'fulfilled');
+    expect(state(h, a)).toBe('fulfilled');
+    expect(h.store.pauses()).not.toHaveProperty('nonce');
+  });
+
+  it('R4: a rebuilt database adopts a delivery whose order it had not scanned yet', async () => {
+    const h = harness({ MAX_BLOCKS_PER_TICK: '5' });
+    await h.run(20); // some history first
+    const a = h.order(ENC('recent'));
+    h.chain.mine();
+    const orderBlock = Number(h.chain.txs.get(a)!.blockNumber);
+    for (let i = 0; i < 30 && !deliveries(h).length; i++) { await h.engine.tick(); h.chain.mine(); h.clock.t += 12_000; }
+    expect(deliveries(h)).toHaveLength(1);
+    const { Store } = await import('../../src/seller/store.js');
+    const { Engine } = await import('../../src/seller/engine.js');
+    const { LocalSigner } = await import('../../src/seller/chain.js');
+    h.store.close();
+    h.store = new Store(h.dbPath + '.r4');
+    // Rebuilt scanner positioned so that, on its first tick, it stops short of the order block
+    // while the one-time look-ahead already covers the delivery block.
+    h.store.setCursor(BigInt(orderBlock - 6));
+    h.engine = new Engine({ cfg: h.cfg, store: h.store, chain: h.chain, signer: new LocalSigner(h.sellerKey), provider: h.provider, now: () => h.clock.t });
+    await h.engine.tick();
+    expect(h.store.getOrder(a)).toBeNull(); // order not scanned yet on the look-ahead tick
+    expect(h.store.ownDeliveryFor(a)).not.toBeNull(); // but its delivery was remembered
+    await h.run(30, () => state(h, a) === 'fulfilled');
+    expect(state(h, a)).toBe('fulfilled');
+    expect(responseOf(h, a)).toHaveLength(1);
+  });
+
+  it('R7: 1-wei payments without a chain id are ignored, not queued for review', async () => {
+    const h = harness();
+    for (let i = 0; i < 3; i++) h.chain.inject({ from: h.buyer, to: h.seller, value: 1n, input: '0x7b7d', chainId: undefined });
+    await h.run(8);
+    expect(h.store.stateCounts()).toEqual({ ignored: 3 });
+  });
+
+  it('R9: sweeps leave enough in the wallet for pending refunds', async () => {
+    const cold = privateKeyToAccount(generatePrivateKey()).address;
+    const h = harness({ SWEEP_TO_ADDRESS: cold, SWEEP_ABOVE_WEI: '50000000000000000', SWEEP_KEEP_WEI: '20000000000000000' });
+    const o = h.order(decisionRequest(['a', 'b']), { value: 30_000_000_000_000_000n }); // 0.03 ETH overpayment → eligible
+    await h.run(8);
+    expect(h.store.getOrder(o)!.refund_status).toBe('eligible');
+    const swept = h.chain.minedBetween(h.seller, cold).reduce((x, t) => x + t.value, 0n);
+    const bal = await h.chain.getBalance(h.seller);
+    expect(bal).toBeGreaterThanOrEqual(30_000_000_000_000_000n);
+    expect(swept).toBeGreaterThan(0n);
+  });
+
+  it('gas limit is never below the locally computed intrinsic cost', async () => {
+    const h = harness();
+    const realEst = h.chain.estimateGas.bind(h.chain);
+    h.chain.estimateGas = async (p) => (await realEst(p)) - 5_000n; // provider under-estimates
+    const a = h.order(ENC('under-estimate'));
+    await h.run(10, () => state(h, a) === 'fulfilled');
+    expect(state(h, a)).toBe('fulfilled');
+  });
+
+  it('the revenue-scaled gas budget has a hard ceiling', () => {
+    const h = harness({ DAILY_GAS_BUDGET_MAX_WEI: '3000000000000000' });
+    for (let i = 0; i < 100; i++)
+      h.store.insertOrder({ hash: ('0x' + i.toString(16).padStart(64, '0')) as Hex, block_number: 1, block_hash: ('0x' + '0'.repeat(64)) as Hex, tx_index: i, buyer: h.buyer, value: PRICE_WEI.toString(), chain_id: 31337, input: '0x' });
+    h.store.db.prepare("UPDATE orders SET state = 'fulfilled'").run();
+    expect(h.engine.dailyBudget()).toBe(3_000_000_000_000_000n);
+  });
+
+  it('obfuscated links are rejected in decision options', () => {
+    for (const x of ['evil[.]example', 'evil(dot)example', 'evil ( . ) com']) {
+      const d = decodeRequest(stringToHex(JSON.stringify({ zh: 1, svc: 'decision', opts: ['ok', x] })));
+      expect(d.ok, x).toBe(false);
+    }
   });
 });

@@ -155,6 +155,10 @@ export class ZeroHumanBuyer {
     const price = BigInt(cat.services[req.svc].price);
     if (price !== PRICE_WEI) throw new Error(`catalog price ${price} differs from the zh/1 protocol price ${PRICE_WEI}; refusing`);
     const data = encodeRequest(req);
+    // ZeroHuman only delivers to plain accounts. Refuse to pay from an address with code
+    // (a contract or an EIP-7702 delegation): the order would be held for a manual refund.
+    const code = await this.o.publicClient.getCode({ address: w.account.address });
+    if (code && code !== '0x') throw new Error('this wallet has code (contract or EIP-7702 delegation); ZeroHuman only delivers to plain accounts');
     return w.sendTransaction({ to, value: price, data, chain: w.chain, account: w.account });
   }
 

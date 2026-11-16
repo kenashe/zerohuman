@@ -23,6 +23,7 @@ export interface SellerConfig {
     deliveryGasLimitCap: bigint;
     dailyGasBudgetWei: bigint;
     revenueBudgetPercent: number;
+    dailyGasBudgetMaxWei: bigint;
     minBalanceWei: bigint;
     stuckAfterMs: number;
     feeBumpPercent: number;
@@ -135,6 +136,8 @@ export function loadConfig(env: Env = process.env): SellerConfig {
       // Floor of the rolling-24h gas budget; the effective budget grows with revenue (F3).
       dailyGasBudgetWei: big(env, 'DAILY_GAS_BUDGET_WEI', 2_000_000_000_000_000n), // 0.002 ETH / rolling 24h
       revenueBudgetPercent: int(env, 'REVENUE_GAS_BUDGET_PERCENT', 75, 0, 100),
+      // Hard ceiling on the revenue-scaled budget, in case the RPC reports fabricated orders.
+      dailyGasBudgetMaxWei: big(env, 'DAILY_GAS_BUDGET_MAX_WEI', 50_000_000_000_000_000n), // 0.05 ETH
       minBalanceWei: big(env, 'MIN_BALANCE_WEI', 0n),
       stuckAfterMs: int(env, 'STUCK_AFTER_MS', 180_000, 1000),
       feeBumpPercent: int(env, 'FEE_BUMP_PERCENT', 20, 11, 200),

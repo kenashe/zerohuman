@@ -70,6 +70,7 @@ check again.
 | `DELIVERY_GAS_LIMIT_CAP` | | `80000` | refuse recipients that need more gas |
 | `DAILY_GAS_BUDGET_WEI` | | `2000000000000000` | floor of the rolling 24 h gas budget (0.002 ETH) |
 | `REVENUE_GAS_BUDGET_PERCENT` | | `75` | budget grows to this % of the last 24 h's order revenue when that is larger |
+| `DAILY_GAS_BUDGET_MAX_WEI` | | `50000000000000000` | hard ceiling on the revenue-scaled budget (0.05 ETH), in case an RPC reports fabricated orders |
 | `MAX_ORDERS_PER_DAY` | | `5000` | fulfilment cap per rolling 24 h |
 | `FINALITY_CONFIRMATIONS` | | `3` mainnet / `1` testnet | depth before a seller tx counts as final and the next is signed |
 | `DEFER_TO_REVIEW_MS` | | `1800000` | how long one too-expensive order is retried before it goes to review |
@@ -102,6 +103,7 @@ node dist/cli/admin.js review
 node dist/cli/admin.js events 50
 node dist/cli/admin.js approve-refund 0x<order>
 node dist/cli/admin.js refund-retry 0x<order>      # after a failed refund or a top-up
+node dist/cli/admin.js sweep-clear                 # dismiss sweeps stuck in review
 node dist/cli/admin.js pause "investigating"      # and: resume operator
 ```
 
@@ -109,8 +111,9 @@ Logs are JSON lines. Useful filters: `"level":"warn"`, `"msg":"transaction mined
 
 **Sending from the service wallet yourself** (for example to set its primary name): set `PAUSED=true`
 first and wait for it to be active. While paused, the worker adopts the wallet's new nonce, so your
-transaction is not mistaken for key misuse. If you send while the worker is running, it raises a
-`nonce` pause that needs `zh-admin resume nonce`.
+transaction is not mistaken for key misuse. If you send while the worker is running, or restore the
+database from an older backup, it raises a `nonce` pause. After checking the wallet's history, run
+`zh-admin resume nonce`; the worker then adopts the wallet's current nonce on its next send.
 
 `PAUSED` is configuration-controlled: `PAUSED=true` pauses on start and `PAUSED=false` (or removing it)
 clears that pause on the next start. It does **not** clear an `operator` pause set with `zh-admin pause` or

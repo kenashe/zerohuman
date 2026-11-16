@@ -13,6 +13,7 @@
  *   zh-admin admit <hash>                 accept a non-allowlisted / reviewed order for fulfilment
  *   zh-admin requeue <hash>               retry a delivery stuck in review (checks prior attempts first)
  *   zh-admin refund-retry <hash>          retry a failed or stuck refund
+ *   zh-admin sweep-clear                  dismiss sweeps stuck in review
  *   zh-admin pause [reason] | resume <kind>
  */
 import { Store, type OrderRow } from '../seller/store.js';
@@ -34,11 +35,20 @@ switch (cmd) {
     const o = need(_[0]);
     if (o.refund_status !== 'failed' && o.refund_status !== 'queued') die(`refund is ${o.refund_status}; nothing to retry`);
     store.tx(() => {
-      store.db.prepare("DELETE FROM outbox WHERE kind = 'refund' AND order_hash = ? AND status IN ('failed','review')").run(o.hash);
+      // Keep the old row and its attempts as history (attempts reference it); retire it so a
+      // fresh refund row can be created (R5).
+      store.db.prepare("UPDATE outbox SET kind = 'refund_retired_' || id WHERE kind = 'refund' AND order_hash = ? AND status IN ('failed','review','queued')").run(o.hash);
       store.updateOrder(o.hash, { refund_status: 'approved' });
       store.event('info', 'refund_retry', o.hash, 'operator');
     });
     out({ ok: true, note: 'the worker re-checks balance and gas before signing' });
+    break;
+  }
+  case 'sweep-clear': {
+    // Dismiss sweeps stuck in review so future sweeps can run (R9).
+    const r = store.db.prepare("UPDATE outbox SET kind = 'sweep_retired_' || id WHERE kind = 'sweep' AND status = 'review'").run();
+    store.event('info', 'sweep_cleared', null, `${r.changes} sweep(s) dismissed by operator`);
+    out({ ok: true, cleared: Number(r.changes) });
     break;
   }
   case 'review':
@@ -58,7 +68,8 @@ switch (cmd) {
     if (BigInt(o.value) === 0n) die('order paid nothing');
     if (o.state === 'fulfilled' || o.state === 'processing') die(`order is ${o.state}; refusing to refund a delivered/processing order`);
     const ob = store.db.prepare("SELECT status FROM outbox WHERE kind = 'delivery' AND order_hash = ?").get(o.hash) as { status: string } | undefined;
-    if (ob && ob.status !== 'review') die(`a delivery for this order is ${ob.status}; refusing to refund`);
+    // A delivery in review never went out; a 'failed' delivery reverted on chain. Both may be refunded (R6).
+    if (ob && ob.status !== 'review' && ob.status !== 'failed') die(`a delivery for this order is ${ob.status}; refusing to refund`);
     store.updateOrder(o.hash, { refund_status: 'approved' });
     store.event('info', 'refund_approved', o.hash, 'operator');
     out({ ok: true, hash: o.hash, refundWei: o.value, to: o.buyer });
@@ -100,9 +111,11 @@ switch (cmd) {
     if (!_[0] || !['operator', 'nonce', 'gas', 'budget', 'balance', 'order_cap', 'stall', 'nonce_lag'].includes(_[0]))
       die('usage: zh-admin resume <operator|nonce|gas|budget|balance|order_cap|stall|nonce_lag>  (ens and config cannot be resumed by hand)');
     store.clearPause(_[0]!);
+    // After reviewing a nonce alarm, the worker adopts the wallet's current nonce on its next send (R2).
+    if (_[0] === 'nonce') store.setMeta('nonce_resync', '1');
     out(store.pauses());
     break;
   default:
-    die('commands: status | review | events | order | approve-refund | decline-refund | refund-retry | admit | requeue | pause | resume');
+    die('commands: status | review | events | order | approve-refund | decline-refund | refund-retry | sweep-clear | admit | requeue | pause | resume');
 }
 store.close();

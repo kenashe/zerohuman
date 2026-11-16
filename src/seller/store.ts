@@ -146,6 +146,7 @@ CREATE TABLE IF NOT EXISTS events (
   order_hash TEXT,
   detail TEXT
 );
+CREATE TABLE IF NOT EXISTS own_deliveries (order_hash TEXT PRIMARY KEY, tx_hash TEXT NOT NULL, input TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS llm_usage (day TEXT PRIMARY KEY, calls INTEGER NOT NULL, failures INTEGER NOT NULL, input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL);
 `;
 
@@ -365,6 +366,17 @@ export class Store {
   }
   attemptsFor(outboxId: number): AttemptRow[] {
     return this.db.prepare('SELECT * FROM attempts WHERE outbox_id = ? ORDER BY id').all(outboxId) as unknown as AttemptRow[];
+  }
+  rememberOwnDelivery(orderHash: string, txHash: string, input: string): void {
+    this.db.prepare('INSERT OR IGNORE INTO own_deliveries(order_hash, tx_hash, input) VALUES(?, ?, ?)').run(orderHash.toLowerCase(), txHash, input);
+  }
+  ownDeliveryFor(orderHash: string): { tx_hash: string; input: string } | null {
+    return (this.db.prepare('SELECT tx_hash, input FROM own_deliveries WHERE order_hash = ?').get(orderHash.toLowerCase()) as { tx_hash: string; input: string } | undefined) ?? null;
+  }
+  /** Wei owed to buyers for refunds that are eligible, approved or queued. */
+  pendingRefundWei(): bigint {
+    const rows = this.db.prepare("SELECT value FROM orders WHERE refund_status IN ('eligible','approved','queued')").all() as Array<{ value: string }>;
+    return rows.reduce((a, r) => a + BigInt(r.value), 0n);
   }
   hasAttempt(txHash: string): boolean {
     return !!this.db.prepare('SELECT 1 FROM attempts WHERE tx_hash = ?').get(txHash);

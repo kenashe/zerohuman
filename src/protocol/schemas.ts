@@ -21,7 +21,7 @@ export const byteLength = (s: string): number => utf8.encode(s).length;
 export const FORBIDDEN_CHARS = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cs}\u115f\u1160\u3164\uffa0\ufe00-\ufe0f\u{e0100}-\u{e01ef}]/u;
 
 /** Text that looks like a link, domain or address. Rejected in fields ZeroHuman echoes back. */
-export const LINK_LIKE = /https?:|www\.|\b[a-z0-9-]+\.(com|net|org|io|xyz|eth|app|dev|ai|co|me|gg|ru|cn|info|biz|link|site|online|top|click)\b|0x[0-9a-f]{8,}/i;
+export const LINK_LIKE = /https?:|www\.|\[\s*\.\s*\]|\(\s*\.\s*\)|\(dot\)|\[dot\]|\b[a-z0-9-]+\.(com|net|org|io|xyz|eth|app|dev|ai|co|me|gg|ru|cn|info|biz|link|site|online|top|click)\b|0x[0-9a-f]{8,}/i;
 
 /**
  * A canonical protocol string: already NFC-normalised, already trimmed, no forbidden
