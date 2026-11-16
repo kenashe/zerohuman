@@ -133,6 +133,12 @@ from a public Ethereum RPC and works even if the API is down.
 
 ## 6. Upgrades and restarts
 
+Railway deploys automatically when `main` changes, provided the **Railway App** is installed on the
+GitHub repo (GitHub → Settings → Applications) and **Auto deploy** is enabled under the service's
+Settings → Source. `/api/status` reports the running commit as `version`; compare it with the latest
+commit on `main` after every merge.
+
+
 Deploys and restarts are safe at any moment: state is durable and every action is idempotent.
 SIGTERM finishes the current tick, releases the lease, and exits. After a crash the new instance
 waits for the old lease to expire (≤ 90 s) unless it has the same `RAILWAY_DEPLOYMENT_ID`.
