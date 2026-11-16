@@ -60,7 +60,7 @@ RPC responses (partially — see risks).
    A remote signer/KMS is the v2 fix.
 2. **Selective non-delivery / seller honesty.** There is no escrow. A seller (or a compromised one)
    can take payment and not deliver. Buyers risk 0.0001 ETH per order. Documented.
-3. **Decision randomness is proposer-influenceable** (see DECISION-ALGORITHM.md). Low-stakes only.
+3. **Decision randomness can be steered by the target block's builder** at little cost (see DECISION-ALGORITHM.md). Low-stakes only.
 4. **Single RPC trust.** A malicious RPC could hide orders (denial of service) or feed a fake block
    hash (wrong decision proof — which buyers would detect with their own RPC). Use reputable
    providers and configure a fallback; buyers must verify with an independent RPC.
@@ -80,6 +80,35 @@ RPC responses (partially — see risks).
    disappears only while the item is in flight — a post-finalisation reorg is out of scope.
 9. **Supply chain.** Dependencies are pinned (`viem` 2.57.18, `zod` 4.6.7) with a lockfile; no
    automated dependency scanning yet.
+
+## Independent reviews (2026-11-16)
+
+Two independent reviews of `main` at `363cbd9` (one by a different model, one by Claude Fable 5.2 with
+proof-of-concept runs against the real engine) found **no path** for buyer input, model output or RPC data to
+change a delivery's recipient or value. They found availability and hygiene problems. Status after the
+hardening PR:
+
+| Finding | Status |
+|---|---|
+| F1 Stale RPC nonce reads raised false "key compromise" pauses; first-receipt finality could lose a delivery on reorg | **Fixed.** Expected nonce is tracked in the database and never signed below; a lagging RPC is waited out; the worker's own earlier and dropped transactions are recognised; deliveries are final only after `FINALITY_CONFIRMATIONS` (3) blocks |
+| F2 One expensive order blocked every order behind it | **Fixed.** Gas is decided per order; an individually expensive order is deferred and goes to review (refund-eligible) after 30 min |
+| F3 Fixed 0.002 ETH daily gas budget stopped service after ~50–200 orders | **Fixed.** Budget = max(floor, 75 % of 24 h revenue); order cap raised to 5,000 |
+| F4 Transient estimate errors parked paid orders in review; repeated broadcast rejections stalled silently | **Fixed.** Only real reverts go to review; transport errors retry; 5 rejections in a row raise a `stall` pause and unhealthy status |
+| F5 Signed error responses echoed buyer-chosen text | **Fixed.** Fixed seller-written error strings; `svc` echoed only if it is a real service; options may not contain links, domains or addresses |
+| F6 Deliveries could run buyer (7702/contract) code with zerohuman.eth as `tx.origin` | **Fixed.** Deliveries go only to addresses with no code, checked right before signing; gas limit is the exact estimate |
+| F7 Refunds larger than the balance or reverted refunds got stuck | **Fixed.** Balance checked before estimation (pauses, resumes after top-up); reverted refunds marked `failed`; `zh-admin refund-retry` |
+| F8 A failing sweep was re-queued every tick | **Fixed** |
+| F9 Database loss within ~72 s of a delivery caused a second delivery | **Fixed.** A fresh database scans the seller's own transactions up to the chain head before the first send |
+| F10 Block builders can steer the Decision outcome | **Documented** (DECISION-ALGORITHM.md). A `prevRandao`-based method would need a new method identifier |
+| F11 Invisible characters, lone surrogates and duplicate JSON keys were accepted | **Fixed** |
+| F12 Cheap wrong-amount payments filled the review queue | **Fixed.** Underpayments are ignored as tips; only overpayments are reviewed |
+| F13 Admin commands did not cross-check refunds and deliveries; `resume` could lift `ens`/`config` | **Fixed** |
+| F14 Pauses did not stop fee-bump re-signing | **Fixed** (identical re-broadcasts still happen) |
+| F15 RPC URLs could appear in fatal logs | **Fixed.** `main` branch protection is an operator setting (see checklist) |
+
+Still open: the hot-wallet key lives on Railway (risk #1); there is no escrow (risk #2); the worker trusts its
+RPC for what it observes (use a reputable keyed provider plus a fallback); the catalog's `status` field is
+informational and the worker enforces access with `BUYER_ALLOWLIST` / `PUBLIC_BUYERS`.
 
 ## Operator responsibilities
 

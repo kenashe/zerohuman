@@ -52,6 +52,10 @@ no ENS record written, no Railway service deployed, no mainnet transaction sent.
 
 ## F. Opening to independent buyers (requires your explicit approval)
 
+- [ ] Hardening PR (review findings F1–F15) merged, CI green, and confirmed as the active Railway deployment.
+- [ ] **[YOU]** GitHub → kenashe/zerohuman → Settings → Branches: protect `main` (require a pull request and the `test` check).
+- [ ] **[YOU]** Railway notification rules on for crashes, failed builds and usage limits; optional uptime monitor on `/api/status`.
+
 - [ ] **[YOU]** Approve public access.
 - [ ] Set `PUBLIC_BUYERS=I_APPROVE_PUBLIC_BUYERS`; redeploy.
 - [ ] **[YOU]** Update the ENS catalog `status` to `live` (re-run `catalog print` with `CATALOG_STATUS=live`).

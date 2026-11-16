@@ -26,6 +26,8 @@ async function main(): Promise<void> {
   }
   registerSecret(cfg.privateKey);
   registerSecret(cfg.llm.apiKey);
+  // RPC URLs often embed an API key; keep them out of every log line, including fatal errors.
+  for (const u of [...cfg.rpcUrls, cfg.ens.rpcUrl]) registerSecret(u);
   scrubSecretsFromEnv();
 
   const signer = new LocalSigner(cfg.privateKey);
@@ -84,6 +86,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((e) => {
-  logger.error('fatal', { error: e });
+  logger.error('fatal', { error: { name: (e as Error).name, message: String((e as Error).message).split('\n')[0] } });
   process.exit(1);
 });

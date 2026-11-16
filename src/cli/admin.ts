@@ -12,6 +12,7 @@
  *   zh-admin decline-refund <hash>
  *   zh-admin admit <hash>                 accept a non-allowlisted / reviewed order for fulfilment
  *   zh-admin requeue <hash>               retry a delivery stuck in review (checks prior attempts first)
+ *   zh-admin refund-retry <hash>          retry a failed or stuck refund
  *   zh-admin pause [reason] | resume <kind>
  */
 import { Store, type OrderRow } from '../seller/store.js';
@@ -29,6 +30,17 @@ switch (cmd) {
   case 'status':
     out({ cursor: store.getCursor()?.toString() ?? null, pauses: store.pauses(), orders: store.stateCounts(), outbox: store.outboxByStatus(), gas24hWei: store.gasSpentSince(Date.now() - 86_400_000).toString(), lease: store.getMeta('lease') });
     break;
+  case 'refund-retry': {
+    const o = need(_[0]);
+    if (o.refund_status !== 'failed' && o.refund_status !== 'queued') die(`refund is ${o.refund_status}; nothing to retry`);
+    store.tx(() => {
+      store.db.prepare("DELETE FROM outbox WHERE kind = 'refund' AND order_hash = ? AND status IN ('failed','review')").run(o.hash);
+      store.updateOrder(o.hash, { refund_status: 'approved' });
+      store.event('info', 'refund_retry', o.hash, 'operator');
+    });
+    out({ ok: true, note: 'the worker re-checks balance and gas before signing' });
+    break;
+  }
   case 'review':
     out(store.ordersInState('needs_review', 500).map((o) => ({ hash: o.hash, buyer: o.buyer, valueWei: o.value, reason: o.reason, refund: o.refund_status })));
     break;
@@ -45,6 +57,8 @@ switch (cmd) {
     if (!['eligible', 'declined'].includes(o.refund_status) && !(o.state === 'needs_review' && o.refund_status === 'none')) die(`refund status is ${o.refund_status}; nothing to approve`);
     if (BigInt(o.value) === 0n) die('order paid nothing');
     if (o.state === 'fulfilled' || o.state === 'processing') die(`order is ${o.state}; refusing to refund a delivered/processing order`);
+    const ob = store.db.prepare("SELECT status FROM outbox WHERE kind = 'delivery' AND order_hash = ?").get(o.hash) as { status: string } | undefined;
+    if (ob && ob.status !== 'review') die(`a delivery for this order is ${ob.status}; refusing to refund`);
     store.updateOrder(o.hash, { refund_status: 'approved' });
     store.event('info', 'refund_approved', o.hash, 'operator');
     out({ ok: true, hash: o.hash, refundWei: o.value, to: o.buyer });
@@ -60,6 +74,7 @@ switch (cmd) {
   case 'admit': {
     const o = need(_[0]);
     if (o.state !== 'needs_review' || !['buyer_not_allowlisted'].includes(o.reason ?? '')) die('only buyer_not_allowlisted orders can be admitted');
+    if (!['none', 'eligible', 'declined'].includes(o.refund_status)) die(`refund is ${o.refund_status}; refusing to admit for delivery`);
     store.setOrderState(o.hash, 'confirmed', 'admitted_by_operator', { refund_status: 'none' });
     out({ ok: true });
     break;
@@ -68,6 +83,7 @@ switch (cmd) {
     const o = need(_[0]);
     const ob = store.db.prepare("SELECT * FROM outbox WHERE kind = 'delivery' AND order_hash = ?").get(o.hash) as { id: number; status: string } | undefined;
     if (!ob || ob.status !== 'review') die('no delivery in review for this order');
+    if (['approved', 'queued', 'sent'].includes(o.refund_status)) die(`refund is ${o.refund_status}; refusing to deliver as well`);
     store.tx(() => {
       store.updateOutbox(ob!.id, { status: 'queued', last_error: null });
       store.setOrderState(o.hash, 'processing', 'requeued_by_operator');
@@ -80,11 +96,13 @@ switch (cmd) {
     out(store.pauses());
     break;
   case 'resume':
-    if (!_[0]) die('usage: zh-admin resume <operator|nonce|gas|budget|balance|order_cap>  (config is controlled by PAUSED)');
+    // ens and config are controlled by the identity check and the PAUSED variable, never by hand.
+    if (!_[0] || !['operator', 'nonce', 'gas', 'budget', 'balance', 'order_cap', 'stall', 'nonce_lag'].includes(_[0]))
+      die('usage: zh-admin resume <operator|nonce|gas|budget|balance|order_cap|stall|nonce_lag>  (ens and config cannot be resumed by hand)');
     store.clearPause(_[0]!);
     out(store.pauses());
     break;
   default:
-    die('commands: status | review | events | order | approve-refund | decline-refund | admit | requeue | pause | resume');
+    die('commands: status | review | events | order | approve-refund | decline-refund | refund-retry | admit | requeue | pause | resume');
 }
 store.close();

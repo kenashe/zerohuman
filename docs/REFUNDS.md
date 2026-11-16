@@ -10,7 +10,10 @@ delivery or a refund. Buyers risk the 0.0001 ETH they send.
 | Valid order, delivered | No refund. The delivery is the service. |
 | Valid order, delivery failed or impossible (e.g. your address rejects calls) | Held for review; operator may refund. |
 | Correct price, invalid request (bad JSON, wrong options…) | An on-chain error response is delivered. No automatic refund. |
-| Wrong amount, missing request data at the exact price, wrong/missing chain id | Held for review, **refund-eligible**. |
+| Overpayment, missing request data at the exact price, wrong/missing chain id | Held for review, **refund-eligible**. |
+| Underpayment (less than 0.0001 ETH) | Ignored and kept as a tip. Not refunded, so that tiny payments cannot flood the review queue. |
+| Order from an address with code (contract or EIP-7702 delegation) | Not delivered; held for review, **refund-eligible**. |
+| An order that stayed too expensive to deliver for 30 minutes | Held for review, **refund-eligible**. |
 | Sent during allowlist phase from a non-allowlisted address | Held for review, **refund-eligible** (or admitted for fulfilment). |
 | Zero-value transactions; transfers without request data at other amounts | Ignored; treated as transfers/tips. |
 
@@ -20,6 +23,8 @@ delivery or a refund. Buyers risk the 0.0001 ETH they send.
 - Always to the **original sender** of the order transaction, for **exactly** the amount it paid.
   The seller pays the refund's gas.
 - Refund transactions go through the same guarded outbox as deliveries (gas caps, budget, invariants).
+  A refund that cannot be paid (insufficient balance) pauses until the wallet is topped up; one that
+  reverts is marked `failed` and can be retried with `zh-admin refund-retry`.
 - Target: reviewed within 7 days while the service is operating. No guarantee.
 
 ## Requesting a refund
