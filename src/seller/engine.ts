@@ -1,7 +1,7 @@
 import { getAddress, type Address, type Hex } from 'viem';
 import { ENS_CATALOG_KEY, PRICE_WEI } from '../protocol/constants.js';
 import { parseCatalog } from '../protocol/catalog.js';
-import { decodeRequest, encodeResponse, hasData, decodeResponse } from '../protocol/codec.js';
+import { decodeRequest, encodeResponse, hasData, decodeResponse, ERROR_TEXT } from '../protocol/codec.js';
 import { computeDecision, targetBlockFor } from '../protocol/decision.js';
 import type { ZhResponse } from '../protocol/schemas.js';
 import { fallbackResult, runEncouragement } from '../services/encouragement.js';
@@ -18,7 +18,13 @@ const ceilPct = (v: bigint, pct: number) => (v * BigInt(100 + pct) + 99n) / 100n
 const minBig = (a: bigint, b: bigint) => (a < b ? a : b);
 
 /** Pause kinds that clear themselves when the condition goes away. */
-export const AUTO_PAUSES = ['gas', 'budget', 'balance', 'order_cap', 'rpc', 'ens'] as const;
+export const AUTO_PAUSES = ['gas', 'budget', 'balance', 'order_cap', 'rpc', 'ens', 'stall', 'nonce_lag'] as const;
+/** Gas of an ordinary delivery; used to tell a globally high fee from one expensive order. */
+const TYPICAL_DELIVERY_GAS = 45_000n;
+/** Broadcast failures in a row before the worker reports itself stalled (F4). */
+const STALL_AFTER_BROADCAST_ERRORS = 5;
+/** How long the RPC may report a nonce below what we already signed before we flag it (F1). */
+const NONCE_LAG_ALARM_MS = 600_000;
 /** Pause kinds that require an operator (`zh-admin resume <kind>`). */
 export const MANUAL_PAUSES = ['operator', 'nonce', 'config'] as const;
 /** Reason recorded by older versions when PAUSED=true was stored as an operator pause. */
@@ -182,6 +188,14 @@ export class Engine {
     await step('classify', async () => {
       rep.classified = await this.classifyDetected();
     });
+    // While an operator has the worker paused they may send from the wallet themselves
+    // (e.g. setting the primary name). Adopt the chain's nonce so that is not an alarm later.
+    if (this.manualPaused() && !('nonce' in this.store.pauses()) && !this.store.inFlight()) {
+      await step('nonce-resync', async () => {
+        const latest = await this.chain.getNonce(this.seller, 'latest');
+        this.store.setMeta('next_nonce', String(latest));
+      });
+    }
     // 4. If nothing is in flight, prepare at most one order and send at most one tx.
     if (rep.reconciled !== 'pending') {
       await step('prepare', async () => {
@@ -298,6 +312,8 @@ export class Engine {
     if (o.chain_id !== this.cfg.chainId) return { state: 'needs_review', reason: 'missing_or_wrong_chain_id', refund: true };
     // Zero-value requests cost an attacker almost nothing; never let them reach the review queue.
     if (value === 0n) return { state: 'ignored', reason: 'unpaid_request', refund: false };
+    // Underpayments are ignored like tips (documented in REFUNDS.md); only overpayments are reviewed.
+    if (value < PRICE_WEI) return { state: 'ignored', reason: 'underpaid', refund: false };
     if (value !== PRICE_WEI) return { state: 'needs_review', reason: 'wrong_amount', refund: true };
     if (this.cfg.allowlist && !this.cfg.allowlist.has(lc(o.buyer))) return { state: 'needs_review', reason: 'buyer_not_allowlisted', refund: true };
     return { state: 'confirmed', reason: null, refund: false };
@@ -343,6 +359,7 @@ export class Engine {
   // ======================================================================= prepare
   /** Build the response for the oldest ready order and enqueue its delivery atomically. */
   async prepareNext(): Promise<Hex | null> {
+    // Deferred (temporarily unaffordable) items do not block preparing other orders (F2).
     if (this.store.inFlight() || this.store.nextQueued()) return null;
     if (this.manualPaused()) return null;
     if (this.store.countOrdersSince(this.now() - DAY_MS) >= this.cfg.maxOrdersPerDay) {
@@ -356,12 +373,15 @@ export class Engine {
     const cursor = this.store.getCursor();
     const safeHead = head - BigInt(this.cfg.confirmations);
     if (cursor === null || safeHead - cursor > BigInt(this.cfg.maxBlocksPerTick)) return null;
+    await this.scanUnconfirmedOwnTxsOnce(cursor, head);
     for (const o of this.store.ordersInState('confirmed', 25)) {
       const decoded = decodeRequest(o.input);
       let res: ZhResponse;
       let resultJson: string | null = null;
       if (!decoded.ok) {
-        res = { zh: 1, re: o.hash, ok: false, ...(decoded.svc ? { svc: decoded.svc } : {}), err: { code: decoded.code, msg: decoded.msg } };
+        // Signed by zerohuman.eth: fixed text only, never anything the buyer wrote (F5).
+        const svc = decoded.svc === 'decision' || decoded.svc === 'encouragement' ? decoded.svc : undefined;
+        res = { zh: 1, re: o.hash, ok: false, ...(svc ? { svc } : {}), err: { code: decoded.code, msg: ERROR_TEXT[decoded.code] } };
       } else if (decoded.value.svc === 'decision') {
         const target = targetBlockFor(o.block_number);
         if (head < target + BigInt(this.cfg.confirmations)) continue; // not ready yet; try next order
@@ -404,7 +424,7 @@ export class Engine {
         if (!cur || cur.state !== 'confirmed') return;
         this.store.enqueue({ kind: 'delivery', order_hash: o.hash, to_addr: o.buyer, value: 0n, data });
         this.store.setOrderState(o.hash, 'processing', null, {
-          service: decoded.ok ? decoded.value.svc : (decoded.svc ?? null),
+          service: decoded.ok ? decoded.value.svc : decoded.svc === 'decision' || decoded.svc === 'encouragement' ? decoded.svc : null,
           request_json: decoded.ok ? JSON.stringify(decoded.value) : null,
           result_json: resultJson,
           response_hex: data,
@@ -419,8 +439,25 @@ export class Engine {
     return null;
   }
 
+  /**
+   * After an empty or rebuilt database, deliveries mined in the last few (not yet confirmed)
+   * blocks would be invisible to the confirmed-depth scanner. Check them once before the
+   * first send so a delivery is never repeated (F9).
+   */
+  private async scanUnconfirmedOwnTxsOnce(cursor: bigint, head: bigint): Promise<void> {
+    if (this.store.getMeta('own_tx_scan') === '1') return;
+    const me = lc(this.seller);
+    for (let n = cursor + 1n; n <= head; n++) {
+      const block = await this.chain.getBlock(n);
+      this.store.tx(() => {
+        for (const t of block.transactions) if (lc(t.from) === me) this.observeOwnTx(t.hash, t.input, Number(t.blockNumber));
+      });
+    }
+    this.store.setMeta('own_tx_scan', '1');
+  }
+
   private queueRefundsAndSweep(): void {
-    for (const o of this.store.db.prepare("SELECT * FROM orders WHERE refund_status = 'approved' ORDER BY block_number LIMIT 5").all() as unknown as OrderRow[]) {
+    for (const o of this.store.db.prepare("SELECT * FROM orders WHERE refund_status = 'approved' AND state NOT IN ('processing','fulfilled') ORDER BY block_number LIMIT 5").all() as unknown as OrderRow[]) {
       this.store.tx(() => {
         this.store.enqueue({ kind: 'refund', order_hash: o.hash, to_addr: o.buyer, value: BigInt(o.value), data: '0x' });
         this.store.updateOrder(o.hash, { refund_status: 'queued' });
@@ -434,7 +471,8 @@ export class Engine {
     if (!s || this.store.inFlight() || this.store.nextQueued()) return;
     const bal = await this.chain.getBalance(this.seller);
     if (bal <= s.aboveWei) return;
-    const pendingSweep = this.store.db.prepare("SELECT id FROM outbox WHERE kind = 'sweep' AND status IN ('queued','signed')").get();
+    // A sweep in review needs the operator; do not queue another every tick (F8).
+    const pendingSweep = this.store.db.prepare("SELECT id FROM outbox WHERE kind = 'sweep' AND status IN ('queued','signed','review')").get();
     if (pendingSweep) return;
     const value = bal - s.keepWei;
     this.store.enqueue({ kind: 'sweep', order_hash: null, to_addr: s.to, value, data: '0x' });
@@ -497,67 +535,114 @@ export class Engine {
     for (const a of this.store.attemptsFor(item.id)) {
       const r = await this.chain.getReceipt(a.tx_hash);
       if (r) {
-        this.finalize(item, a, r);
+        // Already on chain: let reconcile finalize it once it is deep enough.
+        this.store.updateOutbox(item.id, { status: 'signed', nonce: a.nonce });
         return null;
       }
     }
 
-    // ---- fee guards
+    // ---- recipient must be a plain account (F6): no buyer code may run in a tx we originate.
+    if (item.kind === 'delivery') {
+      const code = await this.chain.getCode(item.to_addr as Address);
+      if (code && code !== '0x') {
+        this.toReview(item, 'recipient_has_code: deliveries go only to plain accounts (no contract or EIP-7702 delegation)');
+        return null;
+      }
+    }
+
+    // ---- global fee guard: is the network itself too expensive right now?
     const baseFee = await this.chain.getBaseFee();
     this.lastBaseFee = baseFee;
     const suggested = await this.chain.getPriorityFee();
     const prio = suggested > 0n ? minBig(suggested, this.cfg.gas.maxPriorityFeePerGas) : this.cfg.gas.maxPriorityFeePerGas;
-    if (baseFee + prio > this.cfg.gas.maxFeePerGas) {
-      this.store.setPause('gas', `base fee ${baseFee} + tip ${prio} exceeds cap ${this.cfg.gas.maxFeePerGas}`);
-      return null;
-    }
     // 1.5× base fee headroom (~3 consecutive full blocks) keeps worst-case cost tight.
     const maxFee = minBig((baseFee * 3n) / 2n + prio, this.cfg.gas.maxFeePerGas);
+    if (baseFee + prio > this.cfg.gas.maxFeePerGas || TYPICAL_DELIVERY_GAS * maxFee > this.cfg.gas.maxDeliveryCostWei) {
+      this.store.setPause('gas', `base fee ${baseFee} + tip ${prio} too high for an ordinary delivery (caps: maxFee ${this.cfg.gas.maxFeePerGas}, cost ${this.cfg.gas.maxDeliveryCostWei})`);
+      return null;
+    }
+    this.store.clearPause('gas');
+
+    // ---- balance before estimation, so an oversized refund pauses instead of erroring (F7).
+    const bal = await this.chain.getBalance(this.seller);
+    if (bal < BigInt(item.value) + this.cfg.gas.minBalanceWei) {
+      this.store.setPause('balance', `balance ${bal} below value ${item.value}`);
+      return null;
+    }
 
     let est: bigint;
     try {
       est = await this.chain.estimateGas({ from: this.seller, to: item.to_addr as Address, value: BigInt(item.value), data: item.data });
     } catch (e) {
-      this.toReview(item, `gas estimation failed: ${(e as Error).message.split('\n')[0]}`);
+      const msg = (e as Error).message.split('\n')[0] ?? '';
+      // Only a real execution revert is permanent; timeouts and transport errors retry (F4).
+      if (/revert/i.test(msg)) this.toReview(item, `gas estimation reverted: ${msg}`);
+      else throw new Error(`gas estimation failed (will retry): ${msg}`);
       return null;
     }
     if (est > this.cfg.gas.deliveryGasLimitCap) {
       this.toReview(item, `estimated gas ${est} exceeds cap ${this.cfg.gas.deliveryGasLimitCap}`);
       return null;
     }
-    const gasLimit = minBig(this.cfg.gas.deliveryGasLimitCap, (est * 11n) / 10n + 1n);
+    // Plain-account deliveries are deterministic: the exact estimate is the limit, so nothing extra can run.
+    const gasLimit = item.kind === 'delivery' ? est : minBig(this.cfg.gas.deliveryGasLimitCap, (est * 11n) / 10n + 1n);
     const worst = gasLimit * maxFee;
+
+    // ---- this order alone too expensive (e.g. a maximum-size response): defer it, keep serving others (F2).
     if (item.kind === 'delivery' && worst > this.cfg.gas.maxDeliveryCostWei) {
-      this.store.setPause('gas', `worst-case delivery cost ${worst} wei exceeds MAX_DELIVERY_COST_WEI ${this.cfg.gas.maxDeliveryCostWei}`);
+      const since = item.defer_since ?? this.now();
+      if (this.now() - since >= this.cfg.deferToReviewMs) {
+        this.toReview(item, `delivery cost ${worst} wei stayed above MAX_DELIVERY_COST_WEI for ${Math.round((this.now() - since) / 60000)} min`);
+      } else {
+        this.store.updateOutbox(item.id, { defer_since: since, retry_at: this.now() + 60_000 });
+        this.store.event('info', 'deferred', item.order_hash, `worst-case cost ${worst} > ${this.cfg.gas.maxDeliveryCostWei}; retrying later`);
+      }
       return null;
     }
-    this.store.clearPause('gas');
+
     const spent = this.store.gasSpentSince(this.now() - DAY_MS);
-    if (spent + worst > this.cfg.gas.dailyGasBudgetWei) {
-      this.store.setPause('budget', `24h gas ${spent} + ${worst} would exceed ${this.cfg.gas.dailyGasBudgetWei}`);
+    const budget = this.dailyBudget();
+    if (spent + worst > budget) {
+      this.store.setPause('budget', `24h gas ${spent} + ${worst} would exceed ${budget}`);
       return null;
     }
     this.store.clearPause('budget');
-    const bal = await this.chain.getBalance(this.seller);
     if (bal < BigInt(item.value) + worst + this.cfg.gas.minBalanceWei) {
       this.store.setPause('balance', `balance ${bal} insufficient for value ${item.value} + gas ${worst}`);
       return null;
     }
     this.store.clearPause('balance');
 
-    // ---- nonce discipline: this worker is the only user of the key.
+    // ---- nonce discipline (F1). We are the only signer; never sign below what we already used,
+    // and treat a chain nonce that lags our own record as a stale RPC read, not as an attack.
     const latest = await this.chain.getNonce(this.seller, 'latest');
     const pending = await this.chain.getNonce(this.seller, 'pending');
-    if (pending > latest) {
-      this.store.setPause('nonce', `unknown pending transaction(s) from seller wallet (latest ${latest}, pending ${pending}) — possible key misuse`);
+    const recorded = this.store.getMeta('next_nonce');
+    const maxSigned = this.store.maxSignedNonce();
+    const expected = Math.max(recorded === null ? 0 : Number(recorded), maxSigned === null ? 0 : maxSigned + 1);
+    if (latest < expected && (await this.ownNonceStillLive(latest))) {
+      const since = Number(this.store.getMeta('nonce_lag_since') ?? this.now());
+      this.store.setMeta('nonce_lag_since', String(since));
+      if (this.now() - since > NONCE_LAG_ALARM_MS) this.store.setPause('nonce_lag', `RPC reports nonce ${latest}, but nonce ${expected - 1} was already used; waiting`);
       return null;
     }
+    this.store.delMeta('nonce_lag_since');
+    this.store.clearPause('nonce_lag');
+    if (pending > latest) {
+      this.store.setPause('nonce', `pending transaction(s) from the seller wallet that this worker did not sign (latest ${latest}, pending ${pending}) — possible key misuse`);
+      return null;
+    }
+    if (recorded !== null && latest > expected) {
+      this.store.setPause('nonce', `seller wallet nonce ${latest} is ahead of this worker's records (${expected}): someone else sent from the wallet — investigate; pause with PAUSED=true before using the wallet yourself`);
+      return null;
+    }
+    const nonce = latest;
 
     const signed = await this.signer.sign({
       to: item.to_addr as Address,
       value: BigInt(item.value),
       data: item.data,
-      nonce: latest,
+      nonce,
       gas: gasLimit,
       maxFeePerGas: maxFee,
       maxPriorityFeePerGas: prio,
@@ -566,15 +651,40 @@ export class Engine {
     // Write-ahead: persist the signed tx BEFORE broadcasting so a crash can only ever
     // lead to re-broadcasting the identical transaction, never a second one.
     const attempt = this.store.tx(() => {
-      const a = this.store.addAttempt({ outbox_id: item!.id, tx_hash: signed.hash, raw: signed.raw, nonce: latest, max_fee: maxFee.toString(), priority_fee: prio.toString(), gas_limit: gasLimit.toString() });
-      this.store.updateOutbox(item!.id, { status: 'signed', nonce: latest });
-      this.store.event('info', 'signed', item!.order_hash, `${item!.kind} tx ${signed.hash} nonce ${latest}`);
+      // Deterministic signing: identical parameters give an identical transaction. Reuse it.
+      const existing = this.store.attemptsFor(item!.id).find((x) => x.tx_hash === signed.hash);
+      const a = existing ?? this.store.addAttempt({ outbox_id: item!.id, tx_hash: signed.hash, raw: signed.raw, nonce, max_fee: maxFee.toString(), priority_fee: prio.toString(), gas_limit: gasLimit.toString() });
+      this.store.updateOutbox(item!.id, { status: 'signed', nonce, broadcast_errors: 0, retry_at: null });
+      this.store.setMeta('next_nonce', String(nonce + 1));
+      this.store.event('info', 'signed', item!.order_hash, `${item!.kind} tx ${signed.hash} nonce ${nonce}`);
       return a;
     });
     this.fault('after-sign-before-broadcast');
-    await this.broadcast(attempt);
+    await this.broadcast(attempt, item.id);
     this.fault('after-broadcast');
     return item.id;
+  }
+
+  /**
+   * The chain says nonce `from` is unused, but we have signed transactions at or above it.
+   * If any of them is mined (receipt) or known to the node, the RPC is just behind: wait.
+   * If none is known anywhere, they were dropped and the nonce is genuinely free again.
+   */
+  private async ownNonceStillLive(from: number): Promise<boolean> {
+    const rows = this.store.db.prepare('SELECT * FROM attempts WHERE nonce >= ? ORDER BY id DESC LIMIT 20').all(from) as unknown as AttemptRow[];
+    for (const a of rows) {
+      if (await this.chain.getReceipt(a.tx_hash)) return true;
+      if (await this.chain.hasTransaction(a.tx_hash)) return true;
+    }
+    if (rows.length) this.store.event('warn', 'nonce_dropped', null, `own transactions at nonce >= ${from} are unknown to the node; reusing nonce ${from}`);
+    return false;
+  }
+
+  /** Gas budget for the rolling 24 h: the configured floor, or a share of revenue if larger (F3). */
+  dailyBudget(): bigint {
+    const revenue = this.store.revenueSince(this.now() - DAY_MS, PRICE_WEI);
+    const share = (revenue * BigInt(this.cfg.gas.revenueBudgetPercent)) / 100n;
+    return share > this.cfg.gas.dailyGasBudgetWei ? share : this.cfg.gas.dailyGasBudgetWei;
   }
 
   /** Keep the gas pause flag honest while idle so the dashboard is accurate. */
@@ -585,11 +695,13 @@ export class Engine {
     this.lastGasRefresh = this.now();
     const baseFee = await this.chain.getBaseFee();
     this.lastBaseFee = baseFee;
-    if (baseFee + this.cfg.gas.maxPriorityFeePerGas > this.cfg.gas.maxFeePerGas) this.store.setPause('gas', `base fee ${baseFee} above cap`);
+    const maxFee = minBig((baseFee * 3n) / 2n + this.cfg.gas.maxPriorityFeePerGas, this.cfg.gas.maxFeePerGas);
+    if (baseFee + this.cfg.gas.maxPriorityFeePerGas > this.cfg.gas.maxFeePerGas || TYPICAL_DELIVERY_GAS * maxFee > this.cfg.gas.maxDeliveryCostWei)
+      this.store.setPause('gas', `base fee ${baseFee} above cap`);
     else if ('gas' in this.store.pauses()) this.store.clearPause('gas');
   }
 
-  private async broadcast(a: AttemptRow): Promise<void> {
+  private async broadcast(a: AttemptRow, outboxId: number): Promise<void> {
     try {
       await this.chain.sendRawTransaction(a.raw);
       this.store.markBroadcast(a.id);
@@ -599,8 +711,13 @@ export class Engine {
         this.store.markBroadcast(a.id);
         return;
       }
-      // Uncertain: the node may or may not have accepted it. Reconcile decides later.
-      this.store.event('warn', 'broadcast_error', null, `${a.tx_hash}: ${m.split('\n')[0]}`);
+      // Uncertain: the node may or may not have accepted it. Reconcile decides later, but a
+      // rejection that keeps repeating must be visible, not a silent stall (F4).
+      const item = this.store.getOutbox(outboxId);
+      const n = (item?.broadcast_errors ?? 0) + 1;
+      this.store.updateOutbox(outboxId, { broadcast_errors: n });
+      this.store.event('warn', 'broadcast_error', item?.order_hash ?? null, `${a.tx_hash}: ${m.split('\n')[0]}`);
+      if (n >= STALL_AFTER_BROADCAST_ERRORS) this.store.setPause('stall', `transaction ${a.tx_hash} rejected ${n} times in a row: ${m.split('\n')[0]?.slice(0, 120)}`);
     }
   }
 
@@ -612,6 +729,10 @@ export class Engine {
     for (const a of attempts) {
       const r = await this.chain.getReceipt(a.tx_hash);
       if (r) {
+        // Final only once it is buried deep enough; a reorg before then removes the receipt
+        // and the identical signed tx is re-broadcast below on a later tick (F1).
+        const head = this.lastHead ?? (await this.chain.getBlockNumber());
+        if (r.blockNumber + BigInt(this.cfg.finalityConfirmations) > head) return 'pending';
         this.finalize(item, a, r);
         return 'done';
       }
@@ -623,15 +744,25 @@ export class Engine {
     }
     const latest = await this.chain.getNonce(this.seller, 'latest');
     if (latest > item.nonce!) {
-      // Nonce used, but by none of our recorded attempts (after re-checking every one).
+      // Was the nonce used by one of OUR other transactions? Then this signature is void:
+      // re-queue the item for a fresh nonce instead of raising a compromise alarm (F1).
+      for (const other of this.store.attemptsWithNonce(item.nonce!, item.id)) {
+        if (await this.chain.getReceipt(other.tx_hash)) {
+          this.store.updateOutbox(item.id, { status: 'queued', nonce: null, broadcast_errors: 0 });
+          this.store.event('warn', 'nonce_reused_own', item.order_hash, `nonce ${item.nonce} was used by our own tx ${other.tx_hash}; re-queued`);
+          return 'done';
+        }
+      }
       // Allow a grace period for lagging RPC nodes before raising the alarm.
-      if (this.now() - last.created_at < 60_000) return 'pending';
+      if (this.now() - last.created_at < 120_000) return 'pending';
       this.toReview(item, `nonce ${item.nonce} consumed by an unknown transaction`);
       this.store.setPause('nonce', `nonce ${item.nonce} consumed by unknown tx — investigate possible key compromise`);
       return 'done';
     }
+    const pauses = this.store.pauses();
+    const mayResign = !this.manualPaused() && !('ens' in pauses); // pauses stop fee-bump re-signing (F14)
     const age = this.now() - (last.broadcast_at ?? last.created_at);
-    if (age > this.cfg.gas.stuckAfterMs && attempts.length - 1 < this.cfg.gas.maxReplacements) {
+    if (mayResign && age > this.cfg.gas.stuckAfterMs && attempts.length - 1 < this.cfg.gas.maxReplacements) {
       const baseFee = await this.chain.getBaseFee();
       const prio = ceilPct(BigInt(last.priority_fee), this.cfg.gas.feeBumpPercent);
       let maxFee = ceilPct(BigInt(last.max_fee), this.cfg.gas.feeBumpPercent);
@@ -651,16 +782,17 @@ export class Engine {
         });
         const a = this.store.tx(() => {
           const a = this.store.addAttempt({ outbox_id: item.id, tx_hash: signed.hash, raw: signed.raw, nonce: item.nonce!, max_fee: maxFee.toString(), priority_fee: prio.toString(), gas_limit: last.gas_limit });
+          this.store.updateOutbox(item.id, { broadcast_errors: 0 });
           this.store.event('warn', 'fee_bump', item.order_hash, `replacement ${signed.hash} maxFee ${maxFee}`);
           return a;
         });
-        await this.broadcast(a);
+        await this.broadcast(a, item.id);
         return 'pending';
       }
       this.store.setPause('gas', 'in-flight transaction stuck and fee bump would exceed caps');
     }
-    // Re-broadcast the latest identical signed tx if the node has forgotten it.
-    if (!(await this.chain.hasTransaction(last.tx_hash))) await this.broadcast(last);
+    // Re-broadcast the latest identical signed tx if the node has forgotten it (no new signature).
+    if (!(await this.chain.hasTransaction(last.tx_hash))) await this.broadcast(last, item.id);
     return 'pending';
   }
 
@@ -677,13 +809,15 @@ export class Engine {
       });
       if (item.kind === 'delivery' && item.order_hash) {
         if (ok) this.store.setOrderState(item.order_hash, 'fulfilled', null, { delivery_tx: a.tx_hash, gas_cost_wei: cost.toString(), fulfilled_at: this.now() });
-        else this.store.setOrderState(item.order_hash, 'failed', 'delivery_reverted', { delivery_tx: a.tx_hash, gas_cost_wei: cost.toString() });
+        else this.store.setOrderState(item.order_hash, 'failed', 'delivery_reverted', { delivery_tx: a.tx_hash, gas_cost_wei: cost.toString(), refund_status: 'eligible' });
       } else if (item.kind === 'refund' && item.order_hash) {
-        this.store.updateOrder(item.order_hash, ok ? { refund_status: 'sent', refund_tx: a.tx_hash } : { refund_status: 'approved' });
+        // A reverted refund is marked failed so it is visible, never silently stuck at "queued" (F7).
+        this.store.updateOrder(item.order_hash, ok ? { refund_status: 'sent', refund_tx: a.tx_hash } : { refund_status: 'failed' });
         this.store.event(ok ? 'info' : 'warn', ok ? 'refund_sent' : 'refund_reverted', item.order_hash, a.tx_hash);
       } else {
         this.store.event('info', ok ? 'sweep_sent' : 'sweep_reverted', null, a.tx_hash);
       }
+      this.store.clearPause('stall');
     });
     logger.info('transaction mined', { kind: item.kind, order: item.order_hash, tx: a.tx_hash, status: r.status, gasUsed: r.gasUsed, costWei: cost });
   }
@@ -691,7 +825,10 @@ export class Engine {
   private toReview(item: OutboxRow, reason: string): void {
     this.store.tx(() => {
       this.store.updateOutbox(item.id, { status: 'review', last_error: reason.slice(0, 500) });
-      if (item.kind === 'delivery' && item.order_hash) this.store.setOrderState(item.order_hash, 'needs_review', reason.slice(0, 200));
+      if (item.kind === 'delivery' && item.order_hash) {
+        const o = this.store.getOrder(item.order_hash);
+        this.store.setOrderState(item.order_hash, 'needs_review', reason.slice(0, 200), o && o.refund_status === 'none' && BigInt(o.value) > 0n ? { refund_status: 'eligible' } : {});
+      }
       else this.store.event('warn', 'outbox_review', item.order_hash, reason);
     });
     logger.warn('outbox item needs review', { id: item.id, kind: item.kind, reason });
@@ -707,7 +844,7 @@ export class Engine {
       head: this.lastHead?.toString() ?? null,
       cursor: this.store.getCursor()?.toString() ?? null,
       lastTickAt: this.lastTickAt ? new Date(this.lastTickAt).toISOString() : null,
-      healthy: this.lastTickOk && this.now() - this.lastTickAt < Math.max(120_000, this.cfg.pollIntervalMs * 5),
+      healthy: this.lastTickOk && !('stall' in pauses) && this.now() - this.lastTickAt < Math.max(120_000, this.cfg.pollIntervalMs * 5),
       paused: Object.keys(pauses).filter((k) => k !== 'rpc').length > 0,
       pauses,
       mode: this.cfg.allowlist ? 'allowlist' : 'public',
@@ -719,7 +856,8 @@ export class Engine {
         maxFeePerGasWei: this.cfg.gas.maxFeePerGas.toString(),
         maxDeliveryCostWei: this.cfg.gas.maxDeliveryCostWei.toString(),
         spent24hWei: this.store.gasSpentSince(dayAgo).toString(),
-        dailyBudgetWei: this.cfg.gas.dailyGasBudgetWei.toString(),
+        dailyBudgetWei: this.dailyBudget().toString(),
+        dailyBudgetFloorWei: this.cfg.gas.dailyGasBudgetWei.toString(),
       },
       llm: { provider: this.provider?.name ?? 'none', model: this.cfg.llm.model, today: this.store.llmUsage(today(this.now())), dailyLimit: this.cfg.llm.dailyCallLimit },
     };

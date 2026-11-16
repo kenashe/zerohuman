@@ -59,6 +59,8 @@ export interface ChainClient {
   hasTransaction(hash: Hex): Promise<boolean>;
   getNonce(address: Address, tag: 'latest' | 'pending'): Promise<number>;
   getBalance(address: Address): Promise<bigint>;
+  /** Contract code at an address ('0x' or undefined for a plain account). */
+  getCode(address: Address): Promise<Hex | undefined>;
   getBaseFee(): Promise<bigint>;
   getPriorityFee(): Promise<bigint>;
   estimateGas(p: { from: Address; to: Address; value: bigint; data: Hex }): Promise<bigint>;
@@ -161,6 +163,9 @@ export class ViemChain implements ChainClient {
   }
   getBalance(address: Address) {
     return this.client.getBalance({ address });
+  }
+  getCode(address: Address) {
+    return this.client.getCode({ address });
   }
   async getBaseFee(): Promise<bigint> {
     const b = await this.client.getBlock({ blockTag: 'latest' });

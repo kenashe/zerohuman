@@ -36,12 +36,67 @@ export function decodeJsonBytes(input: Hex, maxBytes: number): DecodeResult<unkn
   } catch {
     return { ok: false, code: 'bad_json', msg: 'payload is not valid UTF-8' };
   }
+  let value: unknown;
   try {
-    return { ok: true, value: JSON.parse(text) as unknown };
+    value = JSON.parse(text) as unknown;
   } catch {
     return { ok: false, code: 'bad_json', msg: 'payload is not valid JSON' };
   }
+  if (hasDuplicateKeys(text)) return { ok: false, code: 'bad_json', msg: 'payload has duplicate keys' };
+  return { ok: true, value };
 }
+
+/**
+ * True if any JSON object in `text` repeats a key. JSON.parse keeps the last value, other
+ * languages may keep the first, so a buyer and an independent verifier could disagree.
+ * Assumes `text` already parsed successfully.
+ */
+export function hasDuplicateKeys(text: string): boolean {
+  const stack: Array<Set<string> | null> = [];
+  let expectKey = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (c === '"') {
+      let j = i + 1;
+      let str = '';
+      while (j < text.length && text[j] !== '"') {
+        if (text[j] === '\\') {
+          str += text.slice(j, j + 2);
+          j += 2;
+        } else str += text[j++];
+      }
+      const top = stack.at(-1);
+      if (expectKey && top) {
+        const key = JSON.parse('"' + str + '"') as string;
+        if (top.has(key)) return true;
+        top.add(key);
+      }
+      expectKey = false;
+      i = j;
+    } else if (c === '{') {
+      stack.push(new Set());
+      expectKey = true;
+    } else if (c === '[') {
+      stack.push(null);
+      expectKey = false;
+    } else if (c === '}' || c === ']') stack.pop();
+    else if (c === ',') expectKey = stack.at(-1) instanceof Set;
+  }
+  return false;
+}
+
+/**
+ * Fixed, seller-authored error texts. Responses are signed by zerohuman.eth, so they never
+ * contain anything the buyer wrote (key names, service names, validator messages).
+ */
+export const ERROR_TEXT: Record<ErrorCode, string> = {
+  bad_json: 'request is not a single valid UTF-8 JSON object',
+  bad_version: 'unsupported protocol version; use "zh": 1',
+  unknown_service: 'unknown service; use "decision" or "encouragement"',
+  invalid_input: 'request does not match the service schema; see the published JSON Schema',
+  too_large: 'request exceeds the 768-byte limit',
+  internal: 'internal error',
+};
 
 /** Decode + validate a buyer request. Never throws. */
 export function decodeRequest(input: Hex): DecodeResult<ZhRequest> {

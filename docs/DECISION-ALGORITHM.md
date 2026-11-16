@@ -52,16 +52,19 @@ fairness-critical decisions.
 
 Known ways the outcome can be influenced:
 
-1. **Block proposer influence.** The proposer of `targetBlock` determines its contents and therefore
-   its hash. A proposer who knew about a specific order could try alternative block contents (or skip
-   proposing, forfeiting rewards) to change the result. Cost to them is real but can be far below the
-   value of a high-stakes decision. The order transaction and the requested options are public in
-   the mempool and in block `orderBlock`.
+1. **Block builder influence.** On mainnet, most blocks are assembled by commercial block builders.
+   The builder of `targetBlock` can try many variants of the block (reordering or including different
+   transactions) and keep whichever hash gives the outcome it wants, at essentially no cost. The
+   order and its options are public in block `orderBlock` five blocks earlier. A builder could also
+   skip building it, forfeiting revenue. Assume anyone who cares enough about a specific order can
+   steer it. A future method version may seed from the target block's `prevRandao`, which a
+   builder cannot choose; changing it requires a new method identifier so existing proofs stay
+   verifiable.
 2. **Proposer–buyer or proposer–seller collusion** amplifies (1).
 3. **Reorgs.** If `targetBlock` is reorganised after delivery, the canonical hash changes and the
    delivered proof no longer verifies against the canonical chain. The seller waits
-   `confirmations` (6 on mainnet) past the target block to make this unlikely; post-finality
-   (~13 minutes) it cannot happen.
+   `confirmations` (6 on mainnet) past the target block to make this unlikely. Six confirmations is
+   not finality; only after Ethereum finality (~13 minutes) can it not happen.
 4. **Order placement timing.** A buyer can choose *when* to send, but not the resulting hash, so this
    gives no useful control.
 5. **Selective non-delivery.** A dishonest seller could see the result and decide not to deliver.

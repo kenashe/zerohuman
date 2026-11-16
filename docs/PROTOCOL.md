@@ -76,9 +76,10 @@ Send one transaction:
 | `chainId` | `1` (EIP-155 replay protection is required; legacy unprotected txs are not fulfilled) |
 | type | any EOA-originated type (legacy-155, 2930, 1559, 7702). The order must be a **top-level** transaction whose `to` is the seller: payments made via internal calls (smart-contract wallets, 4337 bundles) are not detected in v1 |
 
-The response is sent to the transaction's `from` address. If that address runs code (EIP-7702
-delegation or similar) and needs more than ~80,000 gas to receive a zero-value call, the order
-is held for review instead of delivered.
+The response is sent to the transaction's `from` address, which must be a **plain account**.
+If that address has code (a contract, or an EIP-7702 delegation), nothing is delivered: the order
+is held for review and is refund-eligible. ZeroHuman never runs buyer code in a transaction it
+originates.
 
 ### 3.1 Decision request
 
@@ -90,7 +91,7 @@ is held for review instead of delivered.
 |---|---|---|
 | `zh` | yes | `1` |
 | `svc` | yes | `"decision"` |
-| `opts` | yes | array of **2–5** unique strings, each 1–96 UTF-8 bytes |
+| `opts` | yes | array of **2–5** unique strings, each 1–96 UTF-8 bytes. The chosen option is echoed in a transaction signed by zerohuman.eth, so options must not contain links, domains or `0x` addresses |
 | `ctx` | no | 1–160 bytes. Informational only — it never influences the selection |
 | `ref` | no | 1–32 bytes, buyer's own correlation id, echoed nowhere (it's in your tx) |
 
@@ -110,9 +111,11 @@ is held for review instead of delivered.
 
 ### 3.3 String rules (all string fields)
 
-Strings must already be **canonical**: NFC-normalised, no leading/trailing whitespace, and no C0/C1
-control characters (including newlines and tabs), bidi overrides/isolates, zero-width characters,
-or BOM. The seller **rejects** non-canonical strings rather than normalising them, so both sides
+Strings must already be **canonical**: well-formed Unicode, NFC-normalised, no leading/trailing
+whitespace, and no control characters (including newlines and tabs), no format characters
+(bidi controls, zero-width characters, soft hyphen, BOM, the invisible U+E0000 tag block), no
+line/paragraph separators, private-use characters, Hangul fillers or variation selectors.
+Duplicate JSON keys are rejected. The seller **rejects** non-canonical strings rather than normalising them, so both sides
 always agree on the exact bytes. Unknown keys are rejected. The SDK canonicalises for you.
 
 ## 4. Seller processing
@@ -125,9 +128,10 @@ always agree on the exact bytes. Unknown keys are rejected. The SDK canonicalise
 | Situation | Seller action |
 |---|---|
 | Zero value (with or without data) | ignored |
+| Less than the price, with data | ignored (treated as a tip; not refunded) |
 | Value > 0 with no data, ≠ price | ignored (treated as a transfer/tip) |
 | Exactly the price, no data | held for review, refund-eligible |
-| Wrong amount with data | held for review, refund-eligible |
+| More than the price, with data | held for review, refund-eligible |
 | Missing/wrong chain id | held for review, refund-eligible |
 | Sender not allowlisted (allowlist phase) | held for review, refund-eligible |
 
@@ -181,6 +185,8 @@ Selection: `index = uint256(seed) mod n`. See [DECISION-ALGORITHM.md](DECISION-A
 ```
 
 Codes: `bad_json`, `bad_version`, `unknown_service`, `invalid_input`, `too_large`, `internal`.
+`msg` is always one of a fixed set of seller-written sentences; it never repeats text from the
+request. `svc` is present only when the request named a real service.
 
 ## 6. Buyer verification checklist
 
@@ -196,6 +202,9 @@ A buyer should accept a delivery only if, **using its own RPC**:
 
 ## 7. Timing and availability
 
+- Orders are delivered one at a time. The next delivery is signed once the previous one is
+  3 blocks deep (`FINALITY_CONFIRMATIONS`), so sustained throughput is roughly one order per
+  ~40–50 seconds.
 - Encouragement: typically delivered within `confirmations + 2` blocks (~1.5–2 min on mainnet).
 - Decision: cannot be delivered before `orderBlock + 5 + confirmations` (~2.5 min), by design.
 - The seller pauses automatically when gas exceeds its ceilings or its daily gas budget is used up;

@@ -7,6 +7,10 @@ export interface SellerConfig {
   privateKey: Hex;
   databasePath: string;
   confirmations: number;
+  /** Depth at which a seller transaction counts as final (F1). */
+  finalityConfirmations: number;
+  /** How long one order may stay unaffordable on its own before it goes to review (F2). */
+  deferToReviewMs: number;
   startBlock: bigint | null;
   pollIntervalMs: number;
   maxBlocksPerTick: number;
@@ -18,6 +22,7 @@ export interface SellerConfig {
     maxDeliveryCostWei: bigint;
     deliveryGasLimitCap: bigint;
     dailyGasBudgetWei: bigint;
+    revenueBudgetPercent: number;
     minBalanceWei: bigint;
     stuckAfterMs: number;
     feeBumpPercent: number;
@@ -114,6 +119,8 @@ export function loadConfig(env: Env = process.env): SellerConfig {
     privateKey,
     databasePath: env.DATABASE_PATH?.trim() || './data/zerohuman.db',
     confirmations: int(env, 'CONFIRMATIONS', chainId === MAINNET_CHAIN_ID ? 6 : 2, 0, 64),
+    finalityConfirmations: int(env, 'FINALITY_CONFIRMATIONS', chainId === MAINNET_CHAIN_ID ? 3 : 1, 0, 64),
+    deferToReviewMs: int(env, 'DEFER_TO_REVIEW_MS', 1_800_000, 60_000),
     startBlock: startRaw ? BigInt(startRaw) : null,
     pollIntervalMs: int(env, 'POLL_INTERVAL_MS', 6000, 200),
     maxBlocksPerTick: int(env, 'MAX_BLOCKS_PER_TICK', 25, 1, 1000),
@@ -125,13 +132,15 @@ export function loadConfig(env: Env = process.env): SellerConfig {
       // Default: a delivery's WORST-CASE gas (gasLimit × maxFeePerGas) may not exceed 75% of the price.
       maxDeliveryCostWei: big(env, 'MAX_DELIVERY_COST_WEI', (PRICE_WEI * 3n) / 4n),
       deliveryGasLimitCap: big(env, 'DELIVERY_GAS_LIMIT_CAP', 80_000n),
+      // Floor of the rolling-24h gas budget; the effective budget grows with revenue (F3).
       dailyGasBudgetWei: big(env, 'DAILY_GAS_BUDGET_WEI', 2_000_000_000_000_000n), // 0.002 ETH / rolling 24h
+      revenueBudgetPercent: int(env, 'REVENUE_GAS_BUDGET_PERCENT', 75, 0, 100),
       minBalanceWei: big(env, 'MIN_BALANCE_WEI', 0n),
       stuckAfterMs: int(env, 'STUCK_AFTER_MS', 180_000, 1000),
       feeBumpPercent: int(env, 'FEE_BUMP_PERCENT', 20, 11, 200),
       maxReplacements: int(env, 'MAX_REPLACEMENTS', 3, 0, 10),
     },
-    maxOrdersPerDay: int(env, 'MAX_ORDERS_PER_DAY', 300, 1),
+    maxOrdersPerDay: int(env, 'MAX_ORDERS_PER_DAY', 5000, 1),
     llm: {
       provider: llmProvider,
       apiKey: env.DEEPSEEK_API_KEY?.trim() || null,
@@ -139,7 +148,7 @@ export function loadConfig(env: Env = process.env): SellerConfig {
       baseUrl: env.DEEPSEEK_BASE_URL?.trim() || 'https://api.deepseek.com',
       timeoutMs: int(env, 'LLM_TIMEOUT_MS', 15_000, 1000, 60_000),
       maxTokens: int(env, 'LLM_MAX_TOKENS', 220, 32, 1000),
-      dailyCallLimit: int(env, 'LLM_DAILY_CALL_LIMIT', 500, 0),
+      dailyCallLimit: int(env, 'LLM_DAILY_CALL_LIMIT', 2000, 0),
     },
     http: {
       enabled: bool(env, 'HTTP_ENABLED', true),

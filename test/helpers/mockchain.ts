@@ -152,6 +152,11 @@ export class MockChain implements ChainClient {
     this.maybeFail('getNonce');
     return tag === 'latest' ? this.nonces.get(a.toLowerCase()) ?? 0 : this.pendingNonce(a);
   }
+  codes = new Map<string, Hex>();
+  async getCode(a: Address) {
+    this.maybeFail('getCode');
+    return this.codes.get(a.toLowerCase()) ?? '0x';
+  }
   async getBalance(a: Address) {
     return this.balances.get(a.toLowerCase()) ?? 0n;
   }

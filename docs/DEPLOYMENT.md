@@ -68,14 +68,17 @@ check again.
 | `MAX_PRIORITY_FEE_GWEI` | | `0.05` | tip cap (the node's suggestion is used when lower) |
 | `MAX_DELIVERY_COST_WEI` | | `75000000000000` | worst-case gas (limit × maxFee) per delivery; 75 % of the price |
 | `DELIVERY_GAS_LIMIT_CAP` | | `80000` | refuse recipients that need more gas |
-| `DAILY_GAS_BUDGET_WEI` | | `2000000000000000` | rolling 24 h spend cap (0.002 ETH) |
-| `MAX_ORDERS_PER_DAY` | | `300` | fulfilment cap per rolling 24 h |
+| `DAILY_GAS_BUDGET_WEI` | | `2000000000000000` | floor of the rolling 24 h gas budget (0.002 ETH) |
+| `REVENUE_GAS_BUDGET_PERCENT` | | `75` | budget grows to this % of the last 24 h's order revenue when that is larger |
+| `MAX_ORDERS_PER_DAY` | | `5000` | fulfilment cap per rolling 24 h |
+| `FINALITY_CONFIRMATIONS` | | `3` mainnet / `1` testnet | depth before a seller tx counts as final and the next is signed |
+| `DEFER_TO_REVIEW_MS` | | `1800000` | how long one too-expensive order is retried before it goes to review |
 | `MIN_BALANCE_WEI` | | `0` | keep at least this much after a send |
 | `STUCK_AFTER_MS` / `FEE_BUMP_PERCENT` / `MAX_REPLACEMENTS` | | `180000` / `20` / `3` | stuck-tx replacement policy |
 | `LLM_PROVIDER` | | `deepseek` | `deepseek` or `none` (fallback text only). `mock` is refused on mainnet |
 | `DEEPSEEK_API_KEY` | ✔ if deepseek | secret | |
 | `LLM_MODEL` | | `deepseek-flash` | |
-| `LLM_TIMEOUT_MS` / `LLM_MAX_TOKENS` / `LLM_DAILY_CALL_LIMIT` | | `15000` / `220` / `500` | model limits |
+| `LLM_TIMEOUT_MS` / `LLM_MAX_TOKENS` / `LLM_DAILY_CALL_LIMIT` | | `15000` / `220` / `2000` | model limits (beyond the daily limit the built-in fallback text is used) |
 | `SWEEP_TO_ADDRESS` | | | optional cold wallet for automatic revenue sweeps |
 | `SWEEP_ABOVE_WEI` / `SWEEP_KEEP_WEI` | | 0.01 / 0.003 ETH | sweep when balance exceeds X, leaving Y for gas |
 | `HTTP_ENABLED` | | `true` | read-only status API + dashboard |
@@ -98,14 +101,27 @@ node dist/cli/admin.js status
 node dist/cli/admin.js review
 node dist/cli/admin.js events 50
 node dist/cli/admin.js approve-refund 0x<order>
+node dist/cli/admin.js refund-retry 0x<order>      # after a failed refund or a top-up
 node dist/cli/admin.js pause "investigating"      # and: resume operator
 ```
 
 Logs are JSON lines. Useful filters: `"level":"warn"`, `"msg":"transaction mined"`, `"paused"`.
 
+**Sending from the service wallet yourself** (for example to set its primary name): set `PAUSED=true`
+first and wait for it to be active. While paused, the worker adopts the wallet's new nonce, so your
+transaction is not mistaken for key misuse. If you send while the worker is running, it raises a
+`nonce` pause that needs `zh-admin resume nonce`.
+
 `PAUSED` is configuration-controlled: `PAUSED=true` pauses on start and `PAUSED=false` (or removing it)
 clears that pause on the next start. It does **not** clear an `operator` pause set with `zh-admin pause` or
 a security pause such as `nonce`; those still require `zh-admin resume <kind>`.
+
+### Alerts
+
+Turn on Railway's notification rules (account settings → Notification Rules) for crashed deployments,
+failed builds and usage limits. Safety pauses are not crashes; to be told about those, point an external
+uptime monitor at `/api/status` with a keyword check for `"paused":false`, or at `/health`, which returns
+503 when the worker is stalled or not ticking.
 
 ## 5. Public dashboard (optional)
 

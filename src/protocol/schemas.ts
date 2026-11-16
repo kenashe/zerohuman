@@ -15,8 +15,13 @@ export const byteLength = (s: string): number => utf8.encode(s).length;
  * bidi overrides/isolates, zero-width and BOM characters. Keeps payloads single-line,
  * unambiguous, and safe to render on dashboards and in agent logs.
  */
-// eslint-disable-next-line no-control-regex
-export const FORBIDDEN_CHARS = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/u;
+// Controls (Cc), all format characters (Cf: bidi, zero-width, soft hyphen, U+061C, the invisible
+// U+E0000 "tag" block), line/paragraph separators, private use, surrogates, Hangul fillers and
+// variation selectors. Keeps payloads single-line, visible, and safe to show to other agents.
+export const FORBIDDEN_CHARS = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cs}\u115f\u1160\u3164\uffa0\ufe00-\ufe0f\u{e0100}-\u{e01ef}]/u;
+
+/** Text that looks like a link, domain or address. Rejected in fields ZeroHuman echoes back. */
+export const LINK_LIKE = /https?:|www\.|\b[a-z0-9-]+\.(com|net|org|io|xyz|eth|app|dev|ai|co|me|gg|ru|cn|info|biz|link|site|online|top|click)\b|0x[0-9a-f]{8,}/i;
 
 /**
  * A canonical protocol string: already NFC-normalised, already trimmed, no forbidden
@@ -29,6 +34,7 @@ export const canonicalString = (maxBytes: number, label: string) =>
     .string()
     .min(1)
     .max(maxBytes)
+    .refine((s) => s.isWellFormed(), { message: `${label} must be well-formed Unicode` })
     .refine((s) => s === s.normalize('NFC'), { message: `${label} must be NFC-normalised` })
     .refine((s) => s === s.trim(), { message: `${label} must not have leading/trailing whitespace` })
     .refine((s) => !FORBIDDEN_CHARS.test(s), { message: `${label} contains forbidden control/format characters` })
@@ -48,7 +54,7 @@ export const DecisionRequestSchema = z
     zh: z.literal(PROTOCOL_VERSION),
     svc: z.literal('decision'),
     opts: z
-      .array(canonicalString(LIMITS.decisionOptionMaxBytes, 'option'))
+      .array(canonicalString(LIMITS.decisionOptionMaxBytes, 'option').refine((s) => !LINK_LIKE.test(s), { message: 'options must not contain links, domains or addresses' }))
       .min(LIMITS.decisionMinOptions)
       .max(LIMITS.decisionMaxOptions)
       .refine((a) => new Set(a).size === a.length, { message: 'options must be unique' }),

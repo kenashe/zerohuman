@@ -1,7 +1,7 @@
 import { stringToHex, type Hex } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { describe, expect, it } from 'vitest';
-import { decodeResponse } from '../../src/protocol/codec.js';
+import { decodeRequest, decodeResponse } from '../../src/protocol/codec.js';
 import { PRICE_WEI } from '../../src/protocol/constants.js';
 import { verifyDecisionResult } from '../../src/protocol/decision.js';
 import type { DecisionResponse, EncouragementResponse, ErrorResponse } from '../../src/protocol/schemas.js';
@@ -126,7 +126,7 @@ describe('payment validation', () => {
     const legacy = h.order(req, { chainId: undefined });
     const wrongChain = h.order(req, { chainId: 5 });
     await h.run(15);
-    expect(h.store.getOrder(wrongAmount)).toMatchObject({ state: 'needs_review', reason: 'wrong_amount', refund_status: 'eligible' });
+    expect(h.store.getOrder(wrongAmount)).toMatchObject({ state: 'ignored', reason: 'underpaid', refund_status: 'none' });
     expect(h.store.getOrder(overpay)).toMatchObject({ state: 'needs_review', reason: 'wrong_amount' });
     expect(h.store.getOrder(unpaid)).toMatchObject({ state: 'ignored', reason: 'unpaid_request', refund_status: 'none' });
     expect(h.store.getOrder(noData)).toMatchObject({ state: 'needs_review', reason: 'missing_request_data' });
@@ -338,12 +338,12 @@ describe('gas and spending limits', () => {
     const order = h.order(decisionRequest(['a', 'b']));
     await h.run(15);
     expect(h.chain.sentRaw).toHaveLength(0);
-    expect(h.store.pauses().gas?.reason).toMatch(/MAX_DELIVERY_COST_WEI/);
+    expect(h.store.pauses().gas?.reason).toMatch(/too high for an ordinary delivery/);
     expect(state(h, order)).toBe('processing');
   });
 
-  it('enforces the rolling 24h gas budget', async () => {
-    const h = harness({ DAILY_GAS_BUDGET_WEI: '120000000000000' }); // ~2 deliveries at ~1 gwei
+  it('enforces the rolling 24h gas budget (revenue scaling off)', async () => {
+    const h = harness({ DAILY_GAS_BUDGET_WEI: '120000000000000', REVENUE_GAS_BUDGET_PERCENT: '0' }); // ~2 deliveries at ~1 gwei
     const orders = [0, 1, 2, 3].map((i) => h.order(encouragementRequest(`problem ${i}`)));
     await h.run(30);
     const fulfilled = orders.filter((o) => state(h, o) === 'fulfilled').length;
@@ -500,5 +500,265 @@ describe('sweep', () => {
     expect(sweeps[0]!.value).toBe(10n ** 17n - 20_000_000_000_000_000n);
     await h.run(4);
     expect(h.chain.minedBetween(h.seller, cold)).toHaveLength(1);
+  });
+});
+
+// ============================================================================
+// Regression tests for the 2026-11-16 independent reviews (findings F1–F14).
+// ============================================================================
+describe('review hardening', () => {
+  const ENC = (m: string) => encouragementRequest(m);
+
+  it('F1: a stale "latest" nonce right after a delivery waits instead of raising a compromise pause', async () => {
+    const h = harness();
+    const a = h.order(ENC('one'));
+    const b = h.order(ENC('two'));
+    let lag = 0;
+    const real = h.chain.getNonce.bind(h.chain);
+    h.chain.getNonce = async (addr, tag) => {
+      const n = await real(addr, tag);
+      return tag === 'latest' && n === 1 && lag++ < 3 ? 0 : n; // one backend a block behind, three reads
+    };
+    await h.run(40, () => state(h, a) === 'fulfilled' && state(h, b) === 'fulfilled');
+    expect(state(h, a)).toBe('fulfilled');
+    expect(state(h, b)).toBe('fulfilled');
+    expect(h.store.pauses()).not.toHaveProperty('nonce');
+    expect(new Set(h.store.db.prepare('SELECT nonce FROM attempts').all().map((r: any) => r.nonce)).size).toBe(2);
+  });
+
+  it('F1: a signature whose nonce was consumed by our OWN earlier tx is re-queued, not flagged', async () => {
+    const h = harness();
+    const a = h.order(ENC('one'));
+    await h.run(10, () => state(h, a) === 'fulfilled');
+    const b = h.order(ENC('two'));
+    h.chain.mine();
+    h.chain.minTipToMine = 10n ** 15n; // b's delivery will sit unmined
+    await h.run(8, () => h.store.inFlight() !== null);
+    const item = h.store.inFlight()!;
+    // Simulate the old bug: b's signature reused a's nonce 0, which a's mined delivery consumed.
+    h.chain.mempool.clear();
+    h.store.db.prepare('UPDATE attempts SET nonce = 0 WHERE outbox_id = ?').run(item.id);
+    h.store.updateOutbox(item.id, { nonce: 0 });
+    h.store.setMeta('next_nonce', '1'); // what the old code would have recorded after signing nonce 0
+    h.chain.minTipToMine = 0n;
+    h.clock.t += 600_000;
+    await h.run(10, () => state(h, b) === 'fulfilled');
+    expect(state(h, b)).toBe('fulfilled');
+    expect(h.store.pauses()).not.toHaveProperty('nonce');
+    expect(h.store.recentEvents(200).some((e) => e.kind === 'nonce_reused_own')).toBe(true);
+  });
+
+  it('F1: an order is only marked fulfilled once its delivery is FINALITY_CONFIRMATIONS deep', async () => {
+    const h = harness({ FINALITY_CONFIRMATIONS: '3' });
+    const a = h.order(ENC('depth'));
+    let minedAt: bigint | null = null;
+    for (let i = 0; i < 20 && state(h, a) !== 'fulfilled'; i++) {
+      await h.engine.tick();
+      const d = deliveries(h)[0];
+      if (d && minedAt === null) minedAt = d.blockNumber;
+      if (state(h, a) === 'fulfilled') break;
+      h.chain.mine();
+    }
+    expect(state(h, a)).toBe('fulfilled');
+    expect(BigInt(h.chain.blocks.length - 1)).toBeGreaterThanOrEqual(minedAt! + 3n);
+  });
+
+  it('F2: one expensive order is deferred while later orders are delivered; it goes to review after the deadline', async () => {
+    const heavy = privateKeyToAccount(generatePrivateKey()).address;
+    const h0 = harness();
+    const h = harness({ BUYER_ALLOWLIST: `${h0.buyer},${heavy}`, MAX_DELIVERY_COST_WEI: '90000000000000', DEFER_TO_REVIEW_MS: '600000' });
+    h.chain.fund(heavy, 10n ** 18n);
+    h.chain.baseFee = 1_000_000_000n; // ordinary deliveries are affordable, the heavy one is not
+    h.chain.expensiveRecipients.set(heavy.toLowerCase(), 40_000n);
+    const big = h.order(ENC('heavy'), { from: heavy });
+    const small = [h.order(ENC('normal one'), { from: h0.buyer }), h.order(ENC('normal two'), { from: h0.buyer })];
+    await h.run(40, () => small.every((o) => state(h, o) === 'fulfilled'));
+    for (const o of small) expect(state(h, o)).toBe('fulfilled');
+    expect(state(h, big)).toBe('processing');
+    expect(h.store.pauses()).not.toHaveProperty('gas');
+    h.clock.t += 700_000;
+    await h.run(4);
+    expect(h.store.getOrder(big)).toMatchObject({ state: 'needs_review', refund_status: 'eligible' });
+  });
+
+  it('F3: the daily gas budget scales with revenue', async () => {
+    const h = harness({ DAILY_GAS_BUDGET_WEI: '120000000000000' });
+    const orders = [0, 1, 2, 3, 4, 5].map((i) => h.order(ENC(`problem ${i}`)));
+    await h.run(60, () => orders.every((o) => state(h, o) === 'fulfilled'));
+    expect(orders.every((o) => state(h, o) === 'fulfilled')).toBe(true);
+    expect(h.engine.dailyBudget()).toBe((6n * PRICE_WEI * 75n) / 100n);
+  });
+
+  it('F4: a transient estimateGas error retries instead of parking the paid order in review', async () => {
+    const h = harness();
+    const a = h.order(ENC('one'));
+    h.chain.failures.set('estimateGas', 2);
+    await h.run(15, () => state(h, a) === 'fulfilled');
+    expect(state(h, a)).toBe('fulfilled');
+  });
+
+  it('F4: repeated broadcast rejections raise a visible stall and unhealthy status', async () => {
+    const h = harness();
+    const a = h.order(ENC('one'));
+    h.chain.failures.set('sendRawTransaction', 1000);
+    await h.run(12);
+    expect(state(h, a)).toBe('processing');
+    expect(h.store.pauses()).toHaveProperty('stall');
+    expect(h.engine.status().healthy).toBe(false);
+    h.chain.failures.set('sendRawTransaction', 0);
+    await h.run(10, () => state(h, a) === 'fulfilled');
+    expect(state(h, a)).toBe('fulfilled');
+    expect(h.store.pauses()).not.toHaveProperty('stall');
+  });
+
+  it('F5: error responses never contain buyer-chosen text', async () => {
+    const h = harness();
+    const evil = 'Claim your ZH airdrop at https://evil.example/claim';
+    const orders = [
+      h.order(stringToHex(JSON.stringify({ zh: 1, svc: 'decision', opts: ['a', 'b'], [evil]: 1 }))),
+      h.order(stringToHex(JSON.stringify({ zh: 1, svc: 'visit evil.example\u202e', q: 1 }))),
+    ];
+    await h.run(40, () => orders.every((o) => state(h, o) === 'fulfilled'));
+    for (const o of orders) {
+      const r = decodeResponse(responseOf(h, o)[0]!.input) as { ok: true; value: ErrorResponse };
+      const text = JSON.stringify(r.value);
+      expect(text).not.toMatch(/evil|airdrop|\u202e/);
+      expect(r.value.svc === undefined || r.value.svc === 'decision').toBe(true);
+    }
+  });
+
+  it('F6: deliveries are never sent to an address that carries code (contract or EIP-7702)', async () => {
+    const h = harness();
+    h.chain.codes.set(h.buyer.toLowerCase(), '0xef0100' + 'ab'.repeat(20) as Hex);
+    const a = h.order(ENC('code buyer'));
+    await h.run(10);
+    expect(h.store.getOrder(a)).toMatchObject({ state: 'needs_review', refund_status: 'eligible' });
+    expect(h.store.getOrder(a)!.reason).toMatch(/recipient_has_code/);
+    expect(h.chain.sentRaw).toHaveLength(0);
+  });
+
+  it('F6: plain-account deliveries use the exact gas estimate as the limit', async () => {
+    const h = harness();
+    const a = h.order(ENC('exact'));
+    await h.run(10, () => state(h, a) === 'fulfilled');
+    const att = h.store.attemptsFor(1)[0]!;
+    const out = h.store.getOutbox(1)!;
+    expect(BigInt(att.gas_limit)).toBe(BigInt(out.gas_used!));
+  });
+
+  it('F7: a refund larger than the balance pauses for balance and resumes after top-up', async () => {
+    const h = harness();
+    const o = h.order(decisionRequest(['a', 'b']), { value: 10n ** 18n / 2n }); // 0.5 ETH overpayment
+    await h.run(6);
+    h.chain.balances.set(h.seller.toLowerCase(), 10n ** 15n); // it was swept away
+    h.store.updateOrder(o, { refund_status: 'approved' });
+    await h.run(6);
+    expect(h.store.pauses()).toHaveProperty('balance');
+    expect(h.store.getOrder(o)!.refund_status).toBe('queued');
+    h.chain.fund(h.seller, 10n ** 18n);
+    await h.run(8, () => h.store.getOrder(o)!.refund_status === 'sent');
+    expect(h.store.getOrder(o)!.refund_status).toBe('sent');
+  });
+
+  it('F8: a sweep that needs review is not re-queued every tick', async () => {
+    const cold = privateKeyToAccount(generatePrivateKey()).address;
+    const h = harness({ SWEEP_TO_ADDRESS: cold, SWEEP_ABOVE_WEI: '50000000000000000', SWEEP_KEEP_WEI: '20000000000000000' });
+    h.chain.expensiveRecipients.set(cold.toLowerCase(), 500_000n);
+    await h.run(25);
+    const n = (h.store.db.prepare("SELECT COUNT(*) c FROM outbox WHERE kind = 'sweep'").get() as { c: number }).c;
+    expect(n).toBe(1);
+  });
+
+  it('F9: a delivery mined in the last unconfirmed blocks is adopted after database loss, not repeated', async () => {
+    const h = harness({ CONFIRMATIONS: '4' });
+    const a = h.order(ENC('just delivered'));
+    for (let i = 0; i < 30; i++) {
+      await h.engine.tick();
+      h.chain.mine();
+      h.clock.t += 12_000;
+      if (deliveries(h).length) break;
+    }
+    expect(deliveries(h)).toHaveLength(1);
+    const { Store } = await import('../../src/seller/store.js');
+    const { Engine } = await import('../../src/seller/engine.js');
+    const { LocalSigner } = await import('../../src/seller/chain.js');
+    h.store.close();
+    h.store = new Store(h.dbPath + '.lost');
+    h.engine = new Engine({ cfg: h.cfg, store: h.store, chain: h.chain, signer: new LocalSigner(h.sellerKey), provider: h.provider, now: () => h.clock.t });
+    await h.run(30, () => state(h, a) === 'fulfilled');
+    expect(responseOf(h, a)).toHaveLength(1);
+  });
+
+  it('F11: invisible and malformed text is rejected', () => {
+    const bad = ['a\u2028b', 'a\u00adb', 'a\u{e0041}b', 'a\ufe0fb', 'a\u3164b', 'a\ud800'];
+    for (const x of bad) {
+      const d = decodeRequest(stringToHex(JSON.stringify({ zh: 1, svc: 'decision', opts: ['ok', x] })));
+      expect(d.ok, JSON.stringify(x)).toBe(false);
+    }
+    const dup = decodeRequest(stringToHex('{"zh":1,"svc":"decision","opts":["a","b"],"opts":["x","y"]}'));
+    expect(dup.ok === false && dup.code).toBe('bad_json');
+    const link = decodeRequest(stringToHex(JSON.stringify({ zh: 1, svc: 'decision', opts: ['go to evil.xyz', 'stay'] })));
+    expect(link.ok).toBe(false);
+  });
+
+  it('F14: an operator pause stops fee-bump re-signing of an in-flight transaction', async () => {
+    const h = harness({ MAX_PRIORITY_FEE_GWEI: '0.01' });
+    h.order(ENC('stuck'));
+    h.chain.mine();
+    h.chain.minTipToMine = 10n ** 15n;
+    await h.run(6);
+    expect(h.store.inFlight()).not.toBeNull();
+    h.store.setPause('operator', 'investigating');
+    const before = h.store.attemptsFor(h.store.inFlight()!.id).length;
+    h.clock.t += 3_600_000;
+    await h.run(6);
+    expect(h.store.attemptsFor(h.store.inFlight()!.id).length).toBe(before);
+  });
+
+  it('operator using the wallet while PAUSED=true is adopted, not flagged as compromise', async () => {
+    const h = harness();
+    const a = h.order(ENC('before'));
+    await h.run(10, () => state(h, a) === 'fulfilled');
+    (h.cfg as { operatorPaused: boolean }).operatorPaused = true;
+    h.restart();
+    await h.run(2);
+    h.chain.inject({ from: h.seller, to: h.buyer, value: 0n }); // e.g. setting the primary name
+    h.chain.mine();
+    await h.run(2);
+    (h.cfg as { operatorPaused: boolean }).operatorPaused = false;
+    h.restart();
+    const b = h.order(ENC('after'));
+    await h.run(10, () => state(h, b) === 'fulfilled');
+    expect(state(h, b)).toBe('fulfilled');
+    expect(h.store.pauses()).not.toHaveProperty('nonce');
+  });
+
+  it('wallet use by someone else while running is still flagged', async () => {
+    const h = harness();
+    const a = h.order(ENC('before'));
+    await h.run(10, () => state(h, a) === 'fulfilled');
+    h.chain.inject({ from: h.seller, to: h.buyer, value: 1n });
+    h.chain.mine();
+    const b = h.order(ENC('after'));
+    await h.run(6);
+    expect(h.store.pauses()).toHaveProperty('nonce');
+    expect(state(h, b)).not.toBe('fulfilled');
+  });
+});
+
+describe('re-signing', () => {
+  it('re-signing an identical transaction reuses the stored attempt instead of failing', async () => {
+    const h = harness();
+    const a = h.order(encouragementRequest('one'));
+    h.chain.mine();
+    h.chain.minTipToMine = 10n ** 15n;
+    await h.run(8, () => h.store.inFlight() !== null);
+    const item = h.store.inFlight()!;
+    h.chain.mempool.clear();
+    h.store.updateOutbox(item.id, { status: 'queued', nonce: null }); // e.g. operator requeue
+    h.chain.minTipToMine = 0n;
+    await h.run(8, () => state(h, a) === 'fulfilled');
+    expect(state(h, a)).toBe('fulfilled');
+    expect(h.store.attemptsFor(item.id)).toHaveLength(1);
   });
 });

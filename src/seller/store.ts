@@ -14,7 +14,7 @@ import type { Hex } from 'viem';
 
 export const ORDER_STATES = ['detected', 'confirmed', 'processing', 'fulfilled', 'failed', 'needs_review', 'ignored'] as const;
 export type OrderState = (typeof ORDER_STATES)[number];
-export type RefundStatus = 'none' | 'eligible' | 'approved' | 'queued' | 'sent' | 'declined';
+export type RefundStatus = 'none' | 'eligible' | 'approved' | 'queued' | 'sent' | 'declined' | 'failed';
 export type OutboxKind = 'delivery' | 'refund' | 'sweep';
 export type OutboxStatus = 'queued' | 'signed' | 'mined' | 'failed' | 'review';
 
@@ -59,6 +59,12 @@ export interface OutboxRow {
   last_error: string | null;
   created_at: number;
   updated_at: number;
+  /** When this item first became unaffordable on its own (F2 per-item deferral). */
+  defer_since: number | null;
+  /** Do not try this item again before this time. */
+  retry_at: number | null;
+  /** Consecutive broadcast errors for the current attempt (F4 stall detection). */
+  broadcast_errors: number;
 }
 
 export interface AttemptRow {
@@ -152,6 +158,15 @@ export class Store {
     this.db = new DatabaseSync(path);
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
     this.db.exec(SCHEMA);
+    this.migrate();
+  }
+
+  /** Additive, idempotent migrations for databases created by older versions. */
+  private migrate(): void {
+    const cols = new Set((this.db.prepare('PRAGMA table_info(outbox)').all() as Array<{ name: string }>).map((c) => c.name));
+    if (!cols.has('defer_since')) this.db.exec('ALTER TABLE outbox ADD COLUMN defer_since INTEGER');
+    if (!cols.has('retry_at')) this.db.exec('ALTER TABLE outbox ADD COLUMN retry_at INTEGER');
+    if (!cols.has('broadcast_errors')) this.db.exec('ALTER TABLE outbox ADD COLUMN broadcast_errors INTEGER NOT NULL DEFAULT 0');
   }
 
   close(): void {
@@ -307,8 +322,23 @@ export class Store {
   inFlight(): OutboxRow | null {
     return (this.db.prepare("SELECT * FROM outbox WHERE status = 'signed' ORDER BY id LIMIT 1").get() as unknown as OutboxRow) ?? null;
   }
+  /** Oldest queued item that may be tried now (deferred items wait for their retry time). */
   nextQueued(): OutboxRow | null {
-    return (this.db.prepare("SELECT * FROM outbox WHERE status = 'queued' ORDER BY id LIMIT 1").get() as unknown as OutboxRow) ?? null;
+    return (this.db.prepare("SELECT * FROM outbox WHERE status = 'queued' AND (retry_at IS NULL OR retry_at <= ?) ORDER BY id LIMIT 1").get(this.now()) as unknown as OutboxRow) ?? null;
+  }
+  /** Highest nonce this worker has ever signed, or null if it has signed nothing. */
+  maxSignedNonce(): number | null {
+    const r = this.db.prepare('SELECT MAX(nonce) n FROM attempts').get() as { n: number | null };
+    return r.n ?? null;
+  }
+  /** Attempts from OTHER outbox items that used this nonce. */
+  attemptsWithNonce(nonce: number, excludeOutboxId: number): AttemptRow[] {
+    return this.db.prepare('SELECT * FROM attempts WHERE nonce = ? AND outbox_id != ? ORDER BY id').all(nonce, excludeOutboxId) as unknown as AttemptRow[];
+  }
+  /** Wei received from correctly paid orders detected since ts. */
+  revenueSince(ts: number, priceWei: bigint): bigint {
+    const r = this.db.prepare("SELECT COUNT(*) c FROM orders WHERE state IN ('confirmed','processing','fulfilled','failed') AND value = ? AND detected_at >= ?").get(priceWei.toString(), ts) as { c: number };
+    return BigInt(r.c) * priceWei;
   }
   updateOutbox(id: number, patch: Partial<OutboxRow>): void {
     const keys = Object.keys(patch);
@@ -335,6 +365,9 @@ export class Store {
   }
   attemptsFor(outboxId: number): AttemptRow[] {
     return this.db.prepare('SELECT * FROM attempts WHERE outbox_id = ? ORDER BY id').all(outboxId) as unknown as AttemptRow[];
+  }
+  hasAttempt(txHash: string): boolean {
+    return !!this.db.prepare('SELECT 1 FROM attempts WHERE tx_hash = ?').get(txHash);
   }
   markBroadcast(attemptId: number): void {
     this.db.prepare('UPDATE attempts SET broadcast_at = ? WHERE id = ? AND broadcast_at IS NULL').run(this.now(), attemptId);

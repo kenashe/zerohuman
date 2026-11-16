@@ -111,9 +111,11 @@ Rules that make this safe:
 |---|---|---|
 | `config` | `PAUSED=true` | set `PAUSED=false` and redeploy |
 | `operator` | `zh-admin pause`, invariant violation, RPC chain-id mismatch | `zh-admin resume operator` |
-| `nonce` | unknown pending tx from the seller, or nonce consumed by an unknown tx | `zh-admin resume nonce` (after investigation) |
-| `gas` | base fee + tip > `MAX_FEE_PER_GAS_GWEI`, or worst-case delivery cost > `MAX_DELIVERY_COST_WEI` | automatically |
-| `budget` | rolling 24 h gas spend would exceed `DAILY_GAS_BUDGET_WEI` | automatically |
+| `nonce` | someone else sent from the wallet while the worker was running (unknown pending tx, wallet nonce ahead of records, or nonce consumed by an unknown tx). Stale RPC reads and the worker's own dropped transactions do **not** trigger it; transactions an operator sends while `PAUSED=true` are adopted | `zh-admin resume nonce` (after investigation) |
+| `gas` | fees too high for an *ordinary* delivery (an individually expensive order is deferred instead and goes to review after 30 min) | automatically |
+| `budget` | rolling 24 h gas spend would exceed the budget: max(`DAILY_GAS_BUDGET_WEI`, 75 % of 24 h revenue) | automatically |
+| `stall` | the same transaction was rejected by the node 5 times in a row (also reported as unhealthy) | automatically once it mines |
+| `nonce_lag` | the RPC has reported a nonce below one this worker already used for 10 min | automatically |
 | `balance` | wallet can't cover value + worst-case gas | automatically |
 | `order_cap` | > `MAX_ORDERS_PER_DAY` fulfilments in 24 h | automatically |
 | `rpc` | last tick had an RPC error (informational) | automatically |

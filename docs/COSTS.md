@@ -44,6 +44,7 @@ cost the same gas as a delivery and are covered by the payment.
 
 ## Daily ceilings with defaults
 
-- Gas: ≤ 0.002 ETH per rolling 24 h (`DAILY_GAS_BUDGET_WEI`).
-- Orders: ≤ 300 per 24 h (`MAX_ORDERS_PER_DAY`).
-- Model calls: ≤ 500 per UTC day (`LLM_DAILY_CALL_LIMIT`); beyond that, fallback text is delivered.
+- Gas: ≤ max(0.002 ETH, 75 % of the last 24 h's order revenue) per rolling 24 h. Each order pays its own gas
+  many times over at normal fees, so real demand no longer hits a fixed wall.
+- Orders: ≤ 5,000 per 24 h (`MAX_ORDERS_PER_DAY`); throughput is about one delivery every ~40–50 s.
+- Model calls: ≤ 2,000 per UTC day (`LLM_DAILY_CALL_LIMIT`); beyond that, fallback text is delivered.
