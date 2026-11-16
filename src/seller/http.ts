@@ -33,6 +33,8 @@ export function publicStatus(engine: Engine) {
   const s = engine.status();
   return {
     protocol: PROTOCOL_ID,
+    // The git commit this deployment was built from (Railway sets RAILWAY_GIT_COMMIT_SHA).
+    version: (process.env.RAILWAY_GIT_COMMIT_SHA ?? process.env.GIT_COMMIT_SHA ?? '').slice(0, 7) || null,
     services: [
       { id: 'decision', priceWei: PRICE_WEI.toString(), method: DECISION_METHOD, blockOffset: DECISION_BLOCK_OFFSET },
       { id: 'encouragement', priceWei: PRICE_WEI.toString(), tones: ['supportive', 'playful'] },
